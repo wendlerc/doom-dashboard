@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Doom Policy Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ─── reset + tokens ─────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d0f14;
+      --surface:   #141720;
+      --surface2:  #1b1f2e;
+      --border:    #252a3a;
+      --accent:    #5e6ad2;
+      --accent2:   #7c3aed;
+      --green:     #22c55e;
+      --yellow:    #eab308;
+      --red:       #ef4444;
+      --text:      #e2e8f0;
+      --muted:     #64748b;
+      --radius:    12px;
+      --gap:       20px;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; }
+
+    /* ─── layout ─────────────────────────────────────────────── */
+    .shell {
+      display: grid;
+      grid-template-rows: 56px 1fr;
+      grid-template-columns: 1fr 380px;
+      grid-template-areas: "nav nav" "main sidebar";
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ─── nav ────────────────────────────────────────────────── */
+    nav {
+      grid-area: nav;
+      display: flex; align-items: center; gap: 12px;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    nav .logo { font-size: 20px; }
+    nav h1 { font-size: 15px; font-weight: 600; letter-spacing: .02em; }
+    nav .tag {
+      margin-left: auto; font-size: 11px; font-weight: 500; letter-spacing: .08em;
+      padding: 3px 10px; border-radius: 99px;
+      border: 1px solid var(--accent); color: var(--accent);
+    }
+
+    /* ─── main panel ─────────────────────────────────────────── */
+    main {
+      grid-area: main;
+      overflow-y: auto;
+      padding: 24px;
+    }
+
+    .section-title {
+      font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+      color: var(--muted); margin-bottom: 16px;
+    }
+
+    /* ─── map grid ───────────────────────────────────────────── */
+    #map-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: var(--gap);
+    }
+
+    .map-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      transition: border-color .2s, transform .2s, box-shadow .2s;
+      cursor: default;
+    }
+    .map-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-3px);
+      box-shadow: 0 12px 32px rgba(94,106,210,.18);
+    }
+
+    .card-video-wrap {
+      position: relative;
+      background: #000;
+      aspect-ratio: 4/3;
+      overflow: hidden;
+    }
+    .card-video-wrap video {
+      width: 100%; height: 100%; object-fit: cover;
+    }
+    .card-policy-badge {
+      position: absolute; top: 8px; right: 8px;
+      background: rgba(94,106,210,.85);
+      backdrop-filter: blur(6px);
+      font-size: 11px; font-weight: 600; padding: 3px 9px;
+      border-radius: 99px; color: #fff; letter-spacing: .06em;
+    }
+    .card-play-overlay {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,.45);
+      opacity: 1; transition: opacity .25s;
+      pointer-events: none;
+    }
+    .card-video-wrap:hover .card-play-overlay { opacity: 0; }
+    .play-icon { font-size: 40px; line-height: 1; filter: drop-shadow(0 2px 8px #000); }
+
+    .card-body { padding: 14px 16px; }
+    .card-scenario { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+
+    .stat-row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .stat-chip {
+      display: flex; flex-direction: column;
+      background: var(--surface2); border-radius: 8px;
+      padding: 6px 12px; min-width: 70px;
+    }
+    .stat-label { font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+    .stat-value { font-size: 13px; font-weight: 600; font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+    .stat-value.pos { color: var(--green); }
+    .stat-value.neg { color: var(--red); }
+    .stat-value.neu { color: var(--yellow); }
+
+    /* ─── empty state ────────────────────────────────────────── */
+    .empty-state {
+      grid-column: 1/-1;
+      text-align: center; padding: 64px 24px;
+      color: var(--muted);
+    }
+    .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
+    .empty-state h2 { font-size: 18px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
+    .empty-state code {
+      display: inline-block; margin-top: 12px;
+      background: var(--surface2); border-radius: 8px;
+      padding: 8px 16px; font-family: 'JetBrains Mono', monospace;
+      font-size: 13px; color: var(--accent);
+    }
+
+    /* ─── sidebar ────────────────────────────────────────────── */
+    aside {
+      grid-area: sidebar;
+      border-left: 1px solid var(--border);
+      background: var(--surface);
+      overflow-y: auto;
+      padding: 24px 20px;
+      display: flex; flex-direction: column; gap: 20px;
+    }
+
+    /* ─── form groups ────────────────────────────────────────── */
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-label  { font-size: 12px; font-weight: 500; color: var(--muted); }
+    .form-input, .form-select, .form-number {
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px; padding: 8px 12px;
+      font-size: 13px; font-family: inherit; outline: none;
+      transition: border-color .15s;
+      width: 100%;
+    }
+    .form-input:focus, .form-select:focus, .form-number:focus {
+      border-color: var(--accent);
+    }
+    .form-select option { background: var(--surface2); }
+
+    /* ratio table */
+    .ratio-table { display: flex; flex-direction: column; gap: 6px; }
+    .ratio-row { display: flex; align-items: center; gap: 8px; }
+    .ratio-name { font-size: 12px; white-space: nowrap; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+    .ratio-input {
+      width: 60px; background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 6px; padding: 4px 8px;
+      font-size: 12px; font-family: 'JetBrains Mono', monospace; outline: none;
+      transition: border-color .15s;
+    }
+    .ratio-input:focus { border-color: var(--accent); }
+
+    hr.divider { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+
+    /* ─── buttons ────────────────────────────────────────────── */
+    .btn {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      border: none; border-radius: 8px; padding: 10px 16px;
+      font-family: inherit; font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: opacity .15s, transform .1s;
+      width: 100%;
+    }
+    .btn:hover { opacity: .88; transform: translateY(-1px); }
+    .btn:active { transform: translateY(0); }
+    .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; }
+    .btn-danger  { background: rgba(239,68,68,.18); color: var(--red); border: 1px solid var(--red); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+
+    /* ─── progress card ──────────────────────────────────────── */
+    #job-card {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 14px 16px; display: none; flex-direction: column; gap: 10px;
+    }
+    #job-card.visible { display: flex; }
+    .progress-bar-bg {
+      background: var(--surface2); border-radius: 99px; height: 6px; overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%; border-radius: 99px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      transition: width .4s;
+    }
+    #job-log {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; color: var(--muted); max-height: 120px;
+      overflow-y: auto; line-height: 1.6; white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- NAV -->
+  <nav>
+    <span class="logo">🎮</span>
+    <h1>Doom Policy Dashboard</h1>
+    <span class="tag">EVALUATION</span>
+  </nav>
+
+  <!-- MAIN: Map Grid -->
+  <main>
+    <p class="section-title">Sample Episodes — 1 per Map × Policy</p>
+    <div id="map-grid">
+      <div class="empty-state">
+        <div class="icon">📽️</div>
+        <h2>No samples yet</h2>
+        <p>Generate sample games first:</p>
+        <code>uv run python -m doom_dashboard.cli generate-samples --config config.yaml</code>
+      </div>
+    </div>
+  </main>
+
+  <!-- SIDEBAR: Dataset Generator -->
+  <aside>
+    <p class="section-title">Dataset Generator</p>
+
+    <!-- Scenarios -->
+    <div class="form-group">
+      <span class="form-label">SCENARIO RATIOS</span>
+      <div class="ratio-table" id="scenario-ratios"></div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- Policies -->
+    <div class="form-group">
+      <span class="form-label">POLICY RATIOS</span>
+      <div class="ratio-table" id="policy-ratios"></div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- Hyper-parameters -->
+    <div class="form-group">
+      <span class="form-label">TOTAL HOURS</span>
+      <input class="form-number" type="number" id="total-hours" value="2.0" min="0.1" step="0.1" />
+    </div>
+
+    <div class="form-group">
+      <span class="form-label">FRAME SKIP</span>
+      <input class="form-number" type="number" id="frame-skip" value="4" min="1" max="16" step="1" />
+    </div>
+
+    <div class="form-group">
+      <span class="form-label">RENDER RESOLUTION</span>
+      <select class="form-select" id="resolution">
+        <option>RES_160X120</option>
+        <option>RES_320X240</option>
+        <option selected>RES_320X240</option>
+        <option>RES_640X480</option>
+        <option>RES_800X600</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <span class="form-label">SHARD SIZE (MB)</span>
+      <input class="form-number" type="number" id="shard-size" value="512" min="64" max="4096" step="64" />
+    </div>
+
+    <div class="form-group">
+      <span class="form-label">WORKERS (blank = auto)</span>
+      <input class="form-number" type="number" id="num-workers" placeholder="auto" min="1" max="256" />
+    </div>
+
+    <div class="form-group">
+      <span class="form-label">OUTPUT DIRECTORY</span>
+      <input class="form-input" type="text" id="output-dir" value="dataset" />
+    </div>
+
+    <!-- Launch button -->
+    <button class="btn btn-primary" id="launch-btn" onclick="launchDataset()">
+      ⚡ Launch Dataset Generation
+    </button>
+
+    <!-- Progress card -->
+    <div id="job-card">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:12px;font-weight:600" id="job-status-label">Running…</span>
+        <span style="font-size:11px;color:var(--muted)" id="job-pct">0%</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="job-bar" style="width:0%"></div>
+      </div>
+      <div id="job-log"></div>
+      <button class="btn btn-danger" onclick="cancelJob()" id="cancel-btn">✕ Cancel</button>
+    </div>
+  </aside>
+
+</div>
+
+<script>
+/* ─── init ─────────────────────────────────────────────────────── */
+let _cfg = null;
+let _sseSource = null;
+
+async function init() {
+  const [sampRes, cfgRes] = await Promise.all([
+    fetch('/api/samples'),
+    fetch('/api/config'),
+  ]);
+  const { samples } = await sampRes.json();
+  _cfg = await cfgRes.json();
+
+  renderSamples(samples);
+  populateRatios();
+
+  // Pre-fill form from config
+  document.getElementById('total-hours').value = _cfg.dataset.total_hours;
+  document.getElementById('frame-skip').value = _cfg.dataset.frame_skip;
+  document.getElementById('shard-size').value = _cfg.dataset.shard_size_mb;
+  document.getElementById('output-dir').value = _cfg.dataset.output_dir;
+  const resSelect = document.getElementById('resolution');
+  resSelect.value = _cfg.dataset.render_resolution;
+}
+
+/* ─── sample cards ──────────────────────────────────────────────── */
+function renderSamples(samples) {
+  const grid = document.getElementById('map-grid');
+  if (!samples || samples.length === 0) return; // keep empty state
+  grid.innerHTML = '';
+  for (const s of samples) {
+    const rewardClass = s.total_reward > 0 ? 'pos' : s.total_reward < 0 ? 'neg' : 'neu';
+    const durMin = (s.duration_s / 60).toFixed(1);
+    grid.insertAdjacentHTML('beforeend', `
+      <div class="map-card">
+        <div class="card-video-wrap">
+          <video src="/videos/${s.video}" loop muted preload="metadata"
+                 onmouseenter="this.play()" onmouseleave="this.pause();this.currentTime=0"
+                 style="cursor:pointer"></video>
+          <div class="card-play-overlay"><span class="play-icon">▶</span></div>
+          <span class="card-policy-badge">${s.policy}</span>
+        </div>
+        <div class="card-body">
+          <div class="card-scenario">${s.scenario}</div>
+          <div class="stat-row">
+            <div class="stat-chip">
+              <span class="stat-label">Reward</span>
+              <span class="stat-value ${rewardClass}">${s.total_reward.toFixed(1)}</span>
+            </div>
+            <div class="stat-chip">
+              <span class="stat-label">Steps</span>
+              <span class="stat-value neu">${s.steps}</span>
+            </div>
+            <div class="stat-chip">
+              <span class="stat-label">Duration</span>
+              <span class="stat-value neu">${durMin}m</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `);
+  }
+}
+
+/* ─── ratio tables ──────────────────────────────────────────────── */
+function populateRatios() {
+  if (!_cfg) return;
+
+  const fillTable = (containerId, items, existingRatios) => {
+    const c = document.getElementById(containerId);
+    c.innerHTML = '';
+    const n = items.length;
+    for (const item of items) {
+      const name = item.name;
+      const defaultVal = (existingRatios[name] ?? (1.0 / n)).toFixed(2);
+      c.insertAdjacentHTML('beforeend', `
+        <div class="ratio-row">
+          <span class="ratio-name" title="${name}">${name}</span>
+          <input class="ratio-input" type="number" id="sc-ratio-${name}"
+                 value="${defaultVal}" min="0" max="1" step="0.05" />
+        </div>
+      `);
+    }
+  };
+
+  fillTable('scenario-ratios', _cfg.scenarios, _cfg.dataset.scenario_ratios || {});
+  fillTable('policy-ratios',   _cfg.policies,  _cfg.dataset.policy_ratios   || {});
+}
+
+function collectRatios(containerId, items) {
+  const ratios = {};
+  for (const item of items) {
+    const el = document.getElementById(`sc-ratio-${item.name}`);
+    if (el) ratios[item.name] = parseFloat(el.value) || 0;
+  }
+  return ratios;
+}
+
+/* ─── launch ────────────────────────────────────────────────────── */
+async function launchDataset() {
+  const body = {
+    total_hours:       parseFloat(document.getElementById('total-hours').value),
+    frame_skip:        parseInt(document.getElementById('frame-skip').value),
+    render_resolution: document.getElementById('resolution').value,
+    shard_size_mb:     parseInt(document.getElementById('shard-size').value),
+    output_dir:        document.getElementById('output-dir').value,
+    scenario_ratios:   collectRatios('scenario-ratios', _cfg.scenarios),
+    policy_ratios:     collectRatios('policy-ratios',   _cfg.policies),
+    num_workers:       parseInt(document.getElementById('num-workers').value) || null,
+  };
+
+  const res = await fetch('/api/launch-dataset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json();
+
+  if (!json.ok) {
+    alert('Error: ' + (json.error || 'Unknown'));
+    return;
+  }
+
+  const card = document.getElementById('job-card');
+  card.classList.add('visible');
+  document.getElementById('launch-btn').disabled = true;
+  document.getElementById('job-log').textContent = '';
+  startSSE(body.total_hours);
+}
+
+function startSSE(totalHours) {
+  if (_sseSource) _sseSource.close();
+  _sseSource = new EventSource('/api/dataset-stream');
+  _sseSource.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    if (d.done) {
+      document.getElementById('job-status-label').textContent = '✓ Done';
+      document.getElementById('job-bar').style.width = '100%';
+      document.getElementById('job-pct').textContent = '100%';
+      document.getElementById('launch-btn').disabled = false;
+      _sseSource.close();
+      return;
+    }
+    const pct = Math.min(100, ((d.hours_done / d.total) * 100)).toFixed(1);
+    document.getElementById('job-bar').style.width  = pct + '%';
+    document.getElementById('job-pct').textContent  = pct + '%';
+    document.getElementById('job-status-label').textContent = d.running ? 'Running…' : '✓ Done';
+    if (d.log) {
+      const logEl = document.getElementById('job-log');
+      logEl.textContent += d.log + '\n';
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+  };
+}
+
+function cancelJob() {
+  // We don't have a proper cancel endpoint; close the SSE and re-enable button
+  if (_sseSource) { _sseSource.close(); _sseSource = null; }
+  document.getElementById('launch-btn').disabled = false;
+  document.getElementById('job-status-label').textContent = 'Cancelled by user';
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,116 @@
+# ────────────────────────────────────────────────────────────────
+# doom-dashboard config.yaml  ─  edit paths to point at your models
+# ────────────────────────────────────────────────────────────────
+
+# Scenarios to evaluate / include in the dataset.
+# 'cfg' can be a built-in name (see doom_dashboard/config.py) or an
+# absolute path to a .cfg file.
+scenarios:
+  - name: "Basic"
+    cfg: "basic"
+    episode_timeout: 300      # tics (null = use cfg default)
+    frame_skip: 4
+    render_resolution: "RES_320X240"
+    render_hud: false
+
+  - name: "DefendTheCenter"
+    cfg: "defend_the_center"
+    frame_skip: 4
+    render_resolution: "RES_320X240"
+    render_hud: false
+
+  - name: "Deathmatch"
+    cfg: "deathmatch"
+    frame_skip: 4
+    render_resolution: "RES_320X240"
+    render_hud: false
+
+  - name: "HealthGathering"
+    cfg: "health_gathering"
+    frame_skip: 4
+    render_resolution: "RES_320X240"
+    render_hud: false
+
+  - name: "DeadlyCorridor"
+    cfg: "deadly_corridor"
+    frame_skip: 4
+    render_resolution: "RES_320X240"
+    render_hud: false
+
+
+# Policies to sample from.
+# type: "random" | "sb3" | "torch"
+policies:
+  # Always include a random baseline
+  - name: "Random"
+    type: "random"
+
+  # Trained SB3 PPO policies (produced by train_policies.py)
+  # These will become active after training completes.
+  - name: "PPO-Basic"
+    type: "sb3"
+    path: "trained_policies/basic.zip"
+    algo: "PPO"
+    device: "auto"
+
+  - name: "PPO-DefendTheCenter"
+    type: "sb3"
+    path: "trained_policies/defend_the_center.zip"
+    algo: "PPO"
+    device: "auto"
+
+  - name: "PPO-MyWayHome"
+    type: "sb3"
+    path: "./trained_policies/my_way_home.zip"
+    algo: "PPO"
+    device: "auto"
+
+  - name: "PPO-HealthGathering"
+    type: "sb3"
+    path: "trained_policies/health_gathering.zip"
+    algo: "PPO"
+    device: "auto"
+
+  - name: "PPO-DeadlyCorridor"
+    type: "sb3"
+    path: "trained_policies/deadly_corridor.zip"
+    algo: "PPO"
+    device: "auto"
+
+
+# ─── Dashboard ───────────────────────────────────────────────────
+dashboard:
+  samples_per_map: 1
+  render_resolution: "RES_640X480"    # higher res for dashboard videos
+  fps: 30
+  output_dir: "samples"
+
+
+# ─── Dataset Generation ──────────────────────────────────────────
+dataset:
+  output_dir: "dataset"
+  total_hours: 2.0
+
+  # Fraction of gameplay time assigned to each scenario (must sum to 1).
+  # Omit to use uniform distribution.
+  scenario_ratios:
+    Basic:            0.15
+    DefendTheCenter:  0.25
+    Deathmatch:       0.30
+    HealthGathering:  0.20
+    DeadlyCorridor:   0.10
+
+  # Fraction of gameplay time for each policy (must sum to 1).
+  policy_ratios:
+    Random:               0.20
+    PPO-Basic:            0.16
+    PPO-DefendTheCenter:  0.16
+    PPO-MyWayHome:        0.16
+    PPO-HealthGathering:  0.16
+    PPO-DeadlyCorridor:   0.16
+
+  frame_skip: 4
+  render_resolution: "RES_320X240"
+  render_hud: false
+  shard_size_mb: 512
+  num_workers: null        # null = auto (uses all CPU cores, max 32)

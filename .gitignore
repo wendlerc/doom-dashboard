@@ -1,0 +1,46 @@
+# Python / uv
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+*.egg-info/
+dist/
+.eggs/
+
+# Large data files — never commit these
+trained_policies/**/*.zip
+trained_policies/**/*.pt
+trained_policies/**/*.pth
+trained_policies/*.zip
+trained_policies/*.pt
+trained_policies/*.pth
+dataset/
+mp_dataset/
+samples/
+*.tar
+*.tar.gz
+*.npy
+*.pkl
+*.lmp
+*.mp4
+
+# Logs
+*.log
+nohup.out
+
+# Temp / system
+.DS_Store
+*.swp
+*.swo
+tmp/
+/tmp/
+
+# Xvfb / display
+.Xauthority
+
+# IDE
+.vscode/
+.idea/
+
+# Config overrides (keep config.yaml but ignore local overrides)
+config.local.yaml

@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doom-dashboard"
+version = "0.1.0"
+description = "Doom policy evaluation dashboard and WebDataset generator"
+requires-python = ">=3.10"
+dependencies = [
+    "vizdoom",
+    "torch",
+    "stable-baselines3",
+    "opencv-python-headless",
+    "imageio[ffmpeg]",
+    "webdataset",
+    "flask",
+    "flask-cors",
+    "pyyaml",
+    "tqdm",
+    "click",
+    "pillow",
+    "numpy",
+    "sympy<1.14",  # torch._dynamo requires sympy.S which was removed in 1.14
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["doom_dashboard"]
