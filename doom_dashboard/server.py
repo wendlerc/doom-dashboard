@@ -144,4 +144,92 @@ def create_app(config: Config) -> Flask:
         return Response(_gen(), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+    # ── preview generator ─────────────────────────────────────────
+    previews_dir = Path(samples_dir).parent / "previews"
+    previews_dir.mkdir(parents=True, exist_ok=True)
+
+    @app.route("/previews/<path:filename>")
+    def serve_preview(filename: str):
+        return send_from_directory(str(previews_dir), filename)
+
+    _preview_state: Dict[str, Any] = {"running": False, "video": None, "error": None, "meta": None}
+    _preview_lock = threading.Lock()
+
+    @app.route("/api/generate-preview", methods=["POST"])
+    def generate_preview():
+        with _preview_lock:
+            if _preview_state["running"]:
+                return jsonify({"ok": False, "error": "A preview is already generating"}), 409
+
+        body = request.json or {}
+        scenario_name   = body.get("scenario")
+        policy_name     = body.get("policy")
+        frame_skip      = int(body.get("frame_skip", 4))
+        resolution      = body.get("resolution", "RES_320X240")
+        timelimit_secs  = int(body.get("timelimit_secs", 30))
+        render_hud      = bool(body.get("render_hud", False))
+        map_name        = (body.get("map") or "").strip() or None
+
+        # Validate
+        sc = next((s for s in config.scenarios if s.name == scenario_name), None)
+        pol_cfg = next((p for p in config.policies if p.name == policy_name), None)
+        if sc is None or pol_cfg is None:
+            return jsonify({"ok": False, "error": f"Unknown scenario '{scenario_name}' or policy '{policy_name}'"}), 400
+
+        with _preview_lock:
+            _preview_state["running"] = True
+            _preview_state["video"]   = None
+            _preview_state["error"]   = None
+            _preview_state["meta"]    = None
+
+        def _run():
+            from doom_dashboard.policies import load_policy
+            from doom_dashboard.rollout import rollout_episode
+            from doom_dashboard.annotate import annotate_and_encode
+            import time as _time
+            policy = None
+            try:
+                policy = load_policy(pol_cfg)
+                ep = rollout_episode(
+                    scenario=sc,
+                    policy=policy,
+                    render_resolution=resolution,
+                    frame_skip=frame_skip,
+                    max_steps=int(timelimit_secs * 35 / frame_skip),
+                    render_hud=render_hud,
+                    doom_map=map_name,
+                )
+                fname = f"preview_{scenario_name}__{policy_name}_{int(_time.time())}.mp4".lower().replace(" ", "_").replace("-", "")
+                out_path = previews_dir / fname
+                # Match encoded playback speed to in-game time at current frame_skip.
+                preview_fps = max(1, round(35.0 / max(1, frame_skip), 2))
+                annotate_and_encode(ep, str(out_path), fps=preview_fps)
+                with _preview_lock:
+                    _preview_state["video"] = fname
+                    _preview_state["meta"]  = {
+                        "scenario": scenario_name, "policy": policy_name,
+                        "steps": ep.steps, "total_reward": ep.total_reward,
+                        "game_tics": ep.game_tics, "duration_s": ep.duration_s,
+                        "frame_skip": frame_skip, "resolution": resolution,
+                        "map": map_name,
+                        "fps": preview_fps,
+                        "button_names": ep.button_names,
+                    }
+            except Exception as e:
+                with _preview_lock:
+                    _preview_state["error"] = str(e)
+            finally:
+                if policy is not None:
+                    policy.close()
+                with _preview_lock:
+                    _preview_state["running"] = False
+
+        threading.Thread(target=_run, daemon=True).start()
+        return jsonify({"ok": True})
+
+    @app.route("/api/preview-status")
+    def preview_status():
+        with _preview_lock:
+            return jsonify(dict(_preview_state))
+
     return app

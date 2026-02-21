@@ -121,12 +121,19 @@ def generate_samples(config: str, output_dir: Optional[str], dry_run: bool):
 @click.option("--host", default="0.0.0.0", show_default=True)
 def serve(config: str, port: int, host: str):
     """Start the Flask dashboard server."""
-    # Import here so Flask isn't loaded unless 'serve' is called
     from doom_dashboard.server import create_app
     cfg = _load_config(config)
+
+    # Resolve relative dirs to absolute using the config file's parent directory
+    config_dir = Path(os.path.abspath(config)).parent
+    cfg.dashboard.output_dir = str(config_dir / cfg.dashboard.output_dir)
+    cfg.dataset.output_dir   = str(config_dir / cfg.dataset.output_dir)
+
     app = create_app(cfg)
     click.echo(f"Dashboard running at http://{host}:{port}")
+    click.echo(f"  Samples dir: {cfg.dashboard.output_dir}")
     app.run(host=host, port=port, debug=False, threaded=True)
+
 
 
 # ─── generate-dataset ────────────────────────────────────────────

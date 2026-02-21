@@ -56,39 +56,45 @@ def annotate_frame(
     policy_name: str,
     total_reward_so_far: float,
 ) -> np.ndarray:
-    """Return an annotated copy of a frame as uint8 H×W×3."""
+    """Return an annotated copy of a frame as uint8 H×W×3.
+
+    All overlays are at the TOP so the native video scrubber at the
+    bottom is not obscured.
+    """
     img = Image.fromarray(frame if frame.shape[2] == 3 else frame[:, :, :3])
     W, H = img.size
     draw = ImageDraw.Draw(img)
     font_s, font_l = _fonts()
 
-    # ── top bar: scenario / policy ──
-    bar_h = 22
-    draw.rectangle([0, 0, W, bar_h], fill=(20, 20, 20, 220))
-    draw.text((4, 4), f"Map: {scenario_name}  Policy: {policy_name}", fill=(220, 220, 220), font=font_s)
+    row_h = 20
+    top_h  = row_h * 2 + 4          # two-row top banner
 
-    # ── bottom bar: actions + reward ──
-    bot_y = H - bar_h - 2
-    draw.rectangle([0, bot_y, W, H], fill=(20, 20, 20, 220))
+    # semi-transparent top banner
+    draw.rectangle([0, 0, W, top_h], fill=(15, 15, 20, 210))
 
-    pressed = [button_names[i] for i, a in enumerate(action) if a > 0.5]
-    action_str = " | ".join(pressed) if pressed else "NOOP"
-    draw.text((4, bot_y + 4), f"A: {action_str}", fill=(100, 255, 100), font=font_s)
+    # row 1 — actions (green) + step/reward (yellow, right-aligned)
+    pressed = [
+        b.replace("Button.", "").replace("_", " ")
+        for b, a in zip(button_names, action) if a > 0.5
+    ]
+    action_str = "  ".join(pressed) if pressed else "NOOP"
+    draw.text((4, 3), f"▶ {action_str}", fill=(80, 255, 110), font=font_s)
 
-    # right side: step counter + cumulative reward
-    rw_str = f"r={reward:+.1f}  Σ={total_reward_so_far:+.1f}  t={step}/{total_steps}"
-    # right-align
+    rw_str    = f"r={reward:+.1f}  Σ={total_reward_so_far:+.1f}  {step}/{total_steps}"
     try:
-        rw_bbox = font_s.getbbox(rw_str)
-        rw_w = rw_bbox[2] - rw_bbox[0]
+        rw_w = font_s.getbbox(rw_str)[2]
     except AttributeError:
         rw_w = len(rw_str) * 7
-    draw.text((W - rw_w - 4, bot_y + 4), rw_str, fill=(255, 200, 80), font=font_s)
+    draw.text((W - rw_w - 4, 3), rw_str, fill=(255, 210, 60), font=font_s)
 
-    # ── thin reward bar on left edge ──
+    # row 2 — map + policy (grey)
+    draw.text((4, row_h + 4), f"{scenario_name}  ·  {policy_name}", fill=(160, 160, 180), font=font_s)
+
+    # thin left-edge time progress bar (below top banner only)
     if total_steps > 0:
-        prog = int((step / total_steps) * (H - 2 * bar_h))
-        draw.rectangle([0, bar_h, 4, bar_h + prog], fill=(80, 200, 120))
+        avail  = H - top_h
+        filled = int((step / total_steps) * avail)
+        draw.rectangle([0, top_h, 3, top_h + filled], fill=(80, 200, 120))
 
     return np.array(img)
 

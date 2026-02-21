@@ -68,6 +68,9 @@ def rollout_episode(
     scenario: ScenarioConfig,
     policy: BasePolicy,
     render_resolution: Optional[str] = None,
+    frame_skip: Optional[int] = None,
+    render_hud: Optional[bool] = None,
+    doom_map: Optional[str] = None,
     max_steps: Optional[int] = None,
     seed: Optional[int] = None,
     record_frames: bool = True,
@@ -79,19 +82,26 @@ def rollout_episode(
     scenario:           Scenario config (resolved cfg path + params)
     policy:             Policy to use for action selection
     render_resolution:  Override scenario resolution (e.g. "RES_640X480")
+    frame_skip:         Override scenario frame_skip
+    render_hud:         Override scenario HUD rendering
+    doom_map:           Optional map override (e.g. "map01")
     max_steps:          Override episode_timeout (None = use cfg)
     seed:               Random seed for reproducibility
     record_frames:      If False, skip frame capture (faster for non-video runs)
     """
     game = vzd.DoomGame()
     game.load_config(scenario.cfg_path())
+    if doom_map:
+        game.set_doom_map(doom_map)
     game.set_window_visible(False)
     game.set_mode(vzd.Mode.PLAYER)
     game.set_screen_format(vzd.ScreenFormat.CRCGCB)  # C×H×W uint8
 
     res = render_resolution or scenario.render_resolution
+    hud = scenario.render_hud if render_hud is None else bool(render_hud)
+    eff_frame_skip = scenario.frame_skip if frame_skip is None else int(frame_skip)
     game.set_screen_resolution(_parse_resolution(res))
-    game.set_render_hud(scenario.render_hud)
+    game.set_render_hud(hud)
 
     if max_steps is not None:
         game.set_episode_timeout(max_steps)
@@ -113,8 +123,6 @@ def rollout_episode(
 
     game.new_episode()
     t_start = time.perf_counter()
-    frame_skip = scenario.frame_skip
-
     while not game.is_episode_finished():
         state = game.get_state()
         if state is None:
@@ -128,7 +136,7 @@ def rollout_episode(
         action_list = [bool(a) for a in action_arr]
 
         gv = np.array(state.game_variables, dtype=np.float32) if state.game_variables is not None else np.zeros(1)
-        reward = game.make_action(action_list, frame_skip)
+        reward = game.make_action(action_list, eff_frame_skip)
 
         if record_frames:
             frames.append(obs)
@@ -151,12 +159,12 @@ def rollout_episode(
         scenario_name=scenario.name,
         policy_name=policy.name,
         cfg_path=scenario.cfg_path(),
-        frame_skip=frame_skip,
+        frame_skip=eff_frame_skip,
         steps=len(actions),
         duration_s=t_end - t_start,
         game_tics=int(game_tics),
         metadata={
             "render_resolution": res,
-            "render_hud": scenario.render_hud,
+            "render_hud": hud,
         },
     )
