@@ -856,6 +856,12 @@ def record_human_demo(
             audio_np = np.concatenate(audio_slices, axis=0)
         except Exception:
             audio_np = None
+    # Save actions/rewards/game_vars separately first (small files, survives truncation)
+    actions_path = out_dir / f"{stem}.actions.npz"
+    np.savez_compressed(actions_path, actions=actions_np, rewards=rewards_np, game_vars=game_vars_np)
+    click.echo(f"  Actions saved: {actions_path} ({actions_path.stat().st_size / 1024:.0f} KB)")
+
+    # Save frames (may be large at high resolution)
     save_dict = dict(
         frames=frames_np,
         actions=actions_np,

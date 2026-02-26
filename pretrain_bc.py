@@ -96,8 +96,21 @@ class DemoDataset(Dataset):
         for npz_path in npz_paths:
             data = np.load(str(npz_path), allow_pickle=True)
             frames = data["frames"]     # (T, H, W, 3) uint8
-            raw_actions = data["actions"]  # (T, n_buttons_demo) float32
-            game_vars = data.get("game_vars", None)  # (T, n_vars) or None
+
+            # Try loading actions from main npz; fall back to separate .actions.npz
+            if "actions" in data:
+                raw_actions = data["actions"]
+                game_vars = data.get("game_vars", None)
+            else:
+                actions_path = npz_path.parent / (npz_path.stem + ".actions.npz")
+                if actions_path.exists():
+                    adata = np.load(str(actions_path), allow_pickle=True)
+                    raw_actions = adata["actions"]
+                    game_vars = adata.get("game_vars", None)
+                    print(f"  [DemoDataset] loaded actions from {actions_path}")
+                else:
+                    print(f"  [DemoDataset] skipping {npz_path}: no actions (truncated file?)")
+                    continue
 
             T = min(len(frames), len(raw_actions))
             if T == 0:
