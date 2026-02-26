@@ -6,24 +6,31 @@ from pathlib import Path
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("model", help="Path to model .zip")
+    ap.add_argument("model", nargs="?", default=None, help="Path to model .zip")
+    ap.add_argument("--model", dest="model_flag", default=None, help="Path to model .zip (alternative)")
     ap.add_argument("--episodes", type=int, default=8)
     ap.add_argument("--timelimit", type=float, default=2.0)
     ap.add_argument("--cfg", default="doom_dashboard/scenarios/deathmatch_compact.cfg")
     ap.add_argument("--maps", default="map01")
     ap.add_argument("--frame-skip", type=int, default=4)
     ap.add_argument("--resolution", default="320x240")
-    ap.add_argument("--out", default=None, help="Output JSON path")
+    ap.add_argument("--bots", type=int, default=4, help="Number of bots (unused, for compat)")
+    ap.add_argument("--out", "--output", dest="out", default=None, help="Output JSON path")
     args = ap.parse_args()
+
+    # Support both positional and --model flag
+    model_path = args.model or args.model_flag
+    if not model_path:
+        ap.error("Must provide model path as positional argument or --model flag")
 
     from train_overnight_dm import bench_duel_vs_random, materialize_cfg
 
     cfg_path = materialize_cfg(args.cfg)
     maps = [m.strip() for m in args.maps.split(",")]
 
-    print(f"Benchmarking {args.model} ({args.episodes} episodes)...")
+    print(f"Benchmarking {model_path} ({args.episodes} episodes)...")
     result = bench_duel_vs_random(
-        model_path=args.model,
+        model_path=model_path,
         cfg_path=cfg_path,
         scenario_name="deathmatch",
         maps=maps,
@@ -34,7 +41,7 @@ def main():
     )
 
     print(f"\n{'='*60}")
-    print(f"Model: {args.model}")
+    print(f"Model: {model_path}")
     print(f"Episodes: {result['episodes']}")
     print(f"Frags: {result['model_frag_mean']:.2f}")
     print(f"Deaths: {result['model_death_mean']:.2f}")
@@ -48,7 +55,7 @@ def main():
     print(f"Gate: {gate}")
     print(f"{'='*60}")
 
-    out_path = args.out or str(Path(args.model).with_suffix('.bench.json'))
+    out_path = args.out or str(Path(model_path).with_suffix('.bench.json'))
     with open(out_path, 'w') as f:
         json.dump(result, f, indent=2)
     print(f"Saved to {out_path}")

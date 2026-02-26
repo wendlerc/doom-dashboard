@@ -66,28 +66,33 @@ GPU_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/d
 log "GPU free after FrameStack: ${GPU_FREE}MB"
 
 if [ "${GPU_FREE:-0}" -gt 15000 ]; then
-    log "Launching Phase 3: Larger LSTM (512 hidden) with freed GPU"
+    log "Launching Phase 3: Fullaction LSTM (with weapon selection) on freed GPU"
+
+    # Use BC-pretrained init model if available
+    INIT_ARG=""
+    [ -f "trained_policies/bc_fullaction_lstm.zip" ] && INIT_ARG="--init-model trained_policies/bc_fullaction_lstm.zip"
 
     uv run python train_overnight_dm.py \
-        --name "v11c_lstm512" \
-        --cfg doom_dashboard/scenarios/deathmatch_compact.cfg \
+        --name "v12a_fullaction_lstm" \
+        --cfg doom_dashboard/scenarios/deathmatch_fullaction.cfg \
         --maps map01 --timesteps 4000000 --envs 2 --bots 1 --bots-eval 1 \
         --timelimit-minutes 2.5 --frame-skip 4 \
         --obs-height 120 --obs-width 160 \
         --n-steps 1024 --batch-size 1024 --n-epochs 4 \
-        --learning-rate 3e-4 --ent-coef 0.03 --target-kl 0.05 \
+        --learning-rate 3e-4 --ent-coef 0.05 --target-kl 0.05 \
         --policy-hidden-size 512 --policy-hidden-layers 2 \
         --cnn-type impala --cnn-features-dim 256 \
-        --policy-type lstm --lstm-hidden-size 512 --lstm-num-layers 1 \
+        --policy-type lstm --lstm-hidden-size 256 --lstm-num-layers 1 \
         --video-freq 200000 \
         --bench-episodes 16 --bench-timelimit 2.0 \
         --device cuda --wandb \
         --frag-bonus 200 --hit-bonus 12.0 --damage-bonus 0.2 \
         --death-penalty 30 --attack-bonus 0.05 --move-bonus 0.2 \
         --noop-penalty 0.1 --reward-scale 0.1 \
+        $INIT_ARG \
         >> "$LOG" 2>&1 &
     P3_PID=$!
-    log "Phase 3 launched: v11c_lstm512 PID=$P3_PID"
+    log "Phase 3 launched: v12a_fullaction_lstm PID=$P3_PID"
 fi
 
 # ─── Phase 4: Wait for LSTM run to finish ───
@@ -124,24 +129,24 @@ if [ -n "$P3_PID" ]; then
     log "Waiting for Phase 3 (lstm512)..."
     wait $P3_PID 2>/dev/null || true
 
-    LSTM512_MODEL=$(ls -t trained_policies/v11c_lstm512_ckpts/ppo_*_steps.zip 2>/dev/null | head -1)
-    LSTM512_BEST="trained_policies/v11c_lstm512_best/best_model.zip"
-    [ -f "$LSTM512_BEST" ] && LSTM512_MODEL="$LSTM512_BEST"
+    FA_MODEL=$(ls -t trained_policies/v12a_fullaction_lstm_ckpts/ppo_*_steps.zip 2>/dev/null | head -1)
+    FA_BEST="trained_policies/v12a_fullaction_lstm_best/best_model.zip"
+    [ -f "$FA_BEST" ] && FA_MODEL="$FA_BEST"
 
-    if [ -n "$LSTM512_MODEL" ]; then
-        log "Benchmarking LSTM-512 model: $LSTM512_MODEL"
-        mkdir -p "$RESULTS/v11c_lstm512"
-        cp "$LSTM512_MODEL" "$RESULTS/v11c_lstm512/model.zip" 2>/dev/null
+    if [ -n "$FA_MODEL" ]; then
+        log "Benchmarking Fullaction LSTM model: $FA_MODEL"
+        mkdir -p "$RESULTS/v12a_fullaction_lstm"
+        cp "$FA_MODEL" "$RESULTS/v12a_fullaction_lstm/model.zip" 2>/dev/null
 
-        uv run python bench_model.py --model "$LSTM512_MODEL" \
+        uv run python bench_model.py --model "$FA_MODEL" \
+            --cfg doom_dashboard/scenarios/deathmatch_fullaction.cfg \
+            --episodes 16 --bots 4 --timelimit 2.0 \
+            --output "$RESULTS/v12a_fullaction_lstm/bench_fullaction.json" 2>&1 | tee -a "$LOG" || true
+
+        uv run python bench_model.py --model "$FA_MODEL" \
             --cfg doom_dashboard/scenarios/deathmatch_compact.cfg \
             --episodes 16 --bots 4 --timelimit 2.0 \
-            --output "$RESULTS/v11c_lstm512/bench_compact.json" 2>&1 | tee -a "$LOG" || true
-
-        uv run python bench_model.py --model "$LSTM512_MODEL" \
-            --cfg doom_dashboard/scenarios/deathmatch_nomonsters.cfg \
-            --episodes 16 --bots 4 --timelimit 2.0 \
-            --output "$RESULTS/v11c_lstm512/bench_nomonsters.json" 2>&1 | tee -a "$LOG" || true
+            --output "$RESULTS/v12a_fullaction_lstm/bench_compact.json" 2>&1 | tee -a "$LOG" || true
     fi
 fi
 

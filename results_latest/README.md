@@ -1,46 +1,90 @@
 # Doom Deathmatch Agent — Latest Results
 
-## Best Model: v10 (4M steps) — PASSES BOTH SCENARIOS
+## Training In Progress (v11 + v12 pipeline)
 
 **WandB**: https://wandb.ai/chrisxx/doom-overnight
-**Best Model**: `results_latest/overnight_fight_v10/model_4000k.zip`
-**Videos**: `results_latest/overnight_fight_v10/videos/` (also served on port 8766)
+**Monitoring**: `overnight_monitor.sh` (auto-benchmarks and generates videos)
 
-### Final Benchmark (16 episodes, 2 bots, 2 min timelimit)
+### Active Training Runs (GPU: A6000 48GB, 2 parallel runs)
+
+| Run | Config | Architecture | Steps | Reward | FPS | GPU |
+|-----|--------|-------------|-------|--------|-----|-----|
+| **v11a_lstm** | compact (8 btn, 19 macros) | IMPALA CNN + LSTM-256 | ~500k/4M | ~97 | 126 | 24.7GB |
+| **v11b_framestack** | compact (8 btn, 19 macros) | IMPALA CNN + MLP + FS4 | ~700k/4M | ~99 | 174 | 23.7GB |
+
+### Planned Pipeline (overnight_monitor.sh)
+1. When FrameStack finishes (~5h) → benchmark it → launch **v12a_fullaction_lstm**
+2. When LSTM finishes (~7h) → benchmark it
+3. Fullaction LSTM trains on `deathmatch_fullaction.cfg` (18 buttons, 38 macros, weapon select)
+4. Generate showcase videos for all models
+5. Pick winner by composite score (hits, damage, distance)
+
+### After Current Runs: Self-Play
+- `selfplay_overnight.sh` — league-style self-play with opponent pool
+- Trains against bots + evaluates against previous round's model
+- Progressively harder opponents (1→3 bots across rounds)
+
+---
+
+## Previous Best: v10 (4M steps) — PASSES BOTH SCENARIOS
+
+**Best Model**: `results_latest/overnight_fight_v10/model_4000k.zip`
+**Videos**: `results_latest/overnight_fight_v10/videos/`
+
+### v10 Benchmark (16 episodes, 2 bots, 2 min timelimit)
 
 | Model | Scenario | Pass | Hits | Damage | Distance | vs Random |
 |-------|----------|------|------|--------|----------|-----------|
 | **v10 4M** | **Compact (monsters)** | **YES** | **13.0** | **191** | **13,600** | **2.4x hits, 2.9x dmg** |
 | **v10 4M** | **No Monsters** | **YES** | **15.5** | **192** | **11,537** | **4.4x hits, 3.1x dmg** |
 
-### Training Progression
+---
 
-| Checkpoint | Compact Hits | Compact Dmg | NoMonsters Hits | NoMonsters Dmg | Pass? |
-|------------|-------------|-------------|-----------------|----------------|-------|
-| 1.2M | 14.2 | 216 | 14.6 | 167 | Both |
-| 2.0M | 30.0 | 476 | 13.6 | 177 | Both |
-| 3.0M | 21.4 | 290 | 15.2 | 247 | Both |
-| 4.0M | 13.0 | 191 | 15.5 | 192 | Both |
+## Architecture Evolution
 
-Note: High variance between runs due to stochastic ViZDoom deathmatch. All checkpoints pass.
+### v10 (baseline): Feedforward MLP + IMPALA CNN
+- PPO with 19 macro-discrete actions (8 buttons → 19 combos)
+- No temporal context — single frame input
+- Good performance but limited strategic behavior
 
-### Movement Validation (frame-diff analysis)
-All training videos from 400k+ show 100% moving frames (mean diff > 20).
-Previous v9 model was a stationary turret (mean diff 3.2).
+### v11: Temporal Context (LSTM / Frame Stacking)
+- **v11a**: RecurrentPPO LSTM-256 — full hidden state across frames
+- **v11b**: PPO + VecFrameStack(4) — cheap temporal context via stacked frames
+- Both show improved eval reward vs v10 (178 eval reward at 400k steps for LSTM!)
 
-### Key Breakthrough: Position-Based Movement Reward
-Previous models (v9) were **stationary turrets** — they learned to stand still and shoot.
-The v10 model uses **position-based movement reward** (POSITION_X/Y displacement per step)
-instead of action-based reward, preventing the agent from gaming the reward by spinning in place.
+### v12: Fullaction Deathmatch (weapon selection)
+- 18 buttons including SELECT_WEAPON1-6, NEXT/PREV WEAPON
+- 38 macro actions (vs 19 for compact)
+- LSTM architecture for weapon-switching strategy
+- Higher entropy coef (0.05) to encourage exploring the larger action space
 
-### Architecture
-- IMPALA ResNet CNN (features_dim=256) + 2x512 MLP
-- PPO with macro-discrete actions (19 actions from 8 buttons)
-- Trained on `deathmatch_compact.cfg` (with monsters), transfers to nomonsters
-- 4 envs, 1 bot/env, frame_skip=4, obs=120x160
-- Entropy coef=0.03 (prevents policy collapse to 1-2 actions)
+### Future: Self-Play
+- League-style training via `selfplay_overnight.sh` / `train_self_play.py`
+- Opponent pool with progressive difficulty
+- True 1v1 multiplayer evaluation (subprocess isolation)
 
-### Reward Shaping
+---
+
+## Human Gameplay Data
+
+**Recording tool**: `bash record_gameplay.sh [scenario] [map] [minutes] [bots]`
+**Demo location**: `human_demos/`
+**BC pretraining**: `uv run python pretrain_bc.py --demo-dir human_demos/ --cfg ...`
+
+### Current Status
+- `human_deathmatch_fullaction_map01` — 865MB, **truncated** during git transfer
+  - 3950/10470 frames recovered at 720p, NO action labels
+  - Recommend re-recording at `--resolution RES_320X240` to avoid Zip64 issues
+
+### BC Pipeline (ready when demos available)
+1. `pretrain_bc.py` — supervised learning from human gameplay
+2. Supports MLP and LSTM policies
+3. Maps human button presses to macro actions (cross-format: fullaction→compact)
+4. Fine-tune with PPO via `train_overnight_dm.py --init-model bc_model.zip`
+
+---
+
+## Reward Shaping
 | Component | Value | Type |
 |-----------|-------|------|
 | frag_bonus | 200 | Per player kill |
@@ -48,52 +92,37 @@ instead of action-based reward, preventing the agent from gaming the reward by s
 | damage_bonus | 0.2 | Per damage dealt |
 | death_penalty | 30 | Per death |
 | attack_bonus | 0.05 | Per attack action |
-| **move_bonus** | **0.2** | **Position displacement (min 1.0 units, cap 1.5x)** |
+| **move_bonus** | **0.2** | **Position displacement** |
 | noop_penalty | 0.1 | Per idle frame |
 | reward_scale | 0.1 | Global multiplier |
 
-### Benchmark Gate
-```
-hit_mean >= 8               # land hits consistently
-damage_mean >= 100          # deal meaningful damage
-hit_mean > random_hit_mean  # outperform random on hits
-distance > random * 0.5     # must actually move (no turrets)
-kills > random OR damage > random  # outperform random overall
-```
+## Key Scripts
+- `tloop_v11_lstm.sh` — LSTM training loop
+- `tloop_v11_fs.sh` — FrameStack training loop
+- `tloop_v12_fullaction_lstm.sh` — Fullaction LSTM training
+- `overnight_monitor.sh` — automated pipeline (bench, launch, video, pick winner)
+- `selfplay_overnight.sh` — league-style self-play
+- `train_overnight_dm.py` — main training script (supports LSTM/MLP/FrameStack)
+- `pretrain_bc.py` — behavioral cloning from human demos
+- `bench_model.py` — standalone model benchmark
+- `record_gameplay.sh` — human gameplay recorder
 
 ## Files
 ```
-results_latest/overnight_fight_v10/
-  model_4000k.zip                          # Best model (4M steps)
-  model_3000k.zip                          # 3M checkpoint
-  model_2000k.zip                          # 2M checkpoint
-  model_1200k.zip                          # 1.2M checkpoint (first passing)
-  bench_compact_4000k.json                 # Final compact benchmark
-  bench_nomonsters_4000k.json              # Final nomonsters benchmark
-  videos/
-    showcase_compact_4000k.mp4             # Latest compact gameplay
-    showcase_nomonsters_4000k.mp4          # Latest nomonsters gameplay
-    showcase_compact_2000k.mp4             # 2M compact gameplay
-    showcase_nomonsters_2000k.mp4          # 2M nomonsters gameplay
-    showcase_compact_1200k.mp4             # First passing model
-    showcase_nomonsters_1200k.mp4
+results_latest/
+  overnight_fight_v10/
+    model_4000k.zip                          # v10 best model
+    videos/                                  # v10 showcase videos
+  README.md                                  # this file
+
+trained_policies/
+  v11a_lstm_ckpts/ppo_*_steps.zip           # v11 LSTM checkpoints
+  v11a_lstm_best/best_model.zip             # v11 LSTM best
+  v11b_framestack_ckpts/ppo_*_steps.zip     # v11 FrameStack checkpoints
+  v11b_framestack_best/best_model.zip       # v11 FrameStack best
+  (v12a_fullaction_lstm_* coming soon)
+
+human_demos/
+  extracted_frames.npy                       # 3950 frames from human demo
+  *.meta.json                                # demo metadata
 ```
-
-## Previous Models
-
-| Model | Scenario | Moves? | Fights? | Pass? | Notes |
-|-------|----------|--------|---------|-------|-------|
-| **v10 (4M)** | **both** | **YES** | **YES** | **YES** | Position-based reward |
-| v9 (2.15M) | nomonsters | NO | YES | old gate | Turret |
-| exp_fighter_v2 | compact | YES | Monsters only | NO | Kills monsters not players |
-
-## External Resources Investigated
-- **Sample Factory APPO** (HuggingFace) — different framework, not SB3 compatible
-- **P-H-B-D-a16z/ViZDoom-Deathmatch-PPO** — 5k episodes, 18 actions, no quality labels
-- **thavlik/doom-gameplay-dataset** — 170h video, no actions
-- **Conclusion**: No drop-in pretrained models for SB3; training from scratch is best
-
-## Key Scripts
-- `tloop_v10.sh` — training loop with crash recovery
-- `train_overnight_dm.py` — training + position-based reward + bench
-- `validate_and_showcase.sh` — end-to-end validation

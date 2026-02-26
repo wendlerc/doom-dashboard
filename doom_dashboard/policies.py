@@ -239,15 +239,31 @@ class SB3Policy(BasePolicy):
                 "Run training first:\n"
                 "  uv run python train_policies.py"
             )
-        try:
-            sb3_mod = importlib.import_module(f"stable_baselines3.{self.algo.lower()}")
-            algo_cls = getattr(sb3_mod, self.algo.upper())
-        except (ImportError, AttributeError) as e:
+        self._is_recurrent = False
+        self._lstm_states = None
+        self._episode_starts = None
+
+        # Try loading with specified algo, then fallback to RecurrentPPO
+        algo_cls = None
+        for mod_name, cls_name in [
+            (f"stable_baselines3.{self.algo.lower()}", self.algo.upper()),
+            ("sb3_contrib", "RecurrentPPO"),
+        ]:
+            try:
+                mod = importlib.import_module(mod_name)
+                algo_cls = getattr(mod, cls_name)
+                self._model = algo_cls.load(self.path, device=self.device)
+                if cls_name == "RecurrentPPO":
+                    self._is_recurrent = True
+                break
+            except Exception:
+                continue
+
+        if self._model is None:
             raise ImportError(
-                f"Cannot load SB3 algo '{self.algo}'. "
-                "Install stable-baselines3 and verify algo name."
-            ) from e
-        self._model = algo_cls.load(self.path, device=self.device)
+                f"Cannot load SB3 algo '{self.algo}' or RecurrentPPO. "
+                "Install stable-baselines3 / sb3-contrib and verify algo name."
+            )
         self._load_sidecar_meta()
         self._load_button_map()
 
@@ -292,10 +308,25 @@ class SB3Policy(BasePolicy):
                     obs_dict[key] = np.zeros(sh, dtype=np.float32)
 
         try:
-            if obs_dict is not None:
-                action, _ = self._model.predict(obs_dict, deterministic=True)
+            if self._is_recurrent:
+                # RecurrentPPO needs state and episode_start
+                if self._episode_starts is None:
+                    self._episode_starts = np.ones((1,), dtype=bool)
+                predict_kwargs = dict(
+                    state=self._lstm_states,
+                    episode_start=self._episode_starts,
+                    deterministic=True,
+                )
+                if obs_dict is not None:
+                    action, self._lstm_states = self._model.predict(obs_dict, **predict_kwargs)
+                else:
+                    action, self._lstm_states = self._model.predict(small[np.newaxis], **predict_kwargs)
+                self._episode_starts = np.zeros((1,), dtype=bool)
             else:
-                action, _ = self._model.predict(small[np.newaxis], deterministic=True)
+                if obs_dict is not None:
+                    action, _ = self._model.predict(obs_dict, deterministic=True)
+                else:
+                    action, _ = self._model.predict(small[np.newaxis], deterministic=True)
         except Exception:
             # Final fallback: try raw array
             try:

@@ -412,6 +412,12 @@ def build_macro_actions(button_names: Sequence[str]) -> Tuple[List[str], List[np
         macro_specs.append(("NEXT_WEAPON", v("SELECT_NEXT_WEAPON")))
     if "SELECT_PREV_WEAPON" in idx:
         macro_specs.append(("PREV_WEAPON", v("SELECT_PREV_WEAPON")))
+    # Direct weapon selection (fullaction configs)
+    for w in range(1, 7):
+        wk = f"SELECT_WEAPON{w}"
+        if wk in idx:
+            macro_specs.append((f"WEAPON{w}", v(wk)))
+            macro_specs.append((f"WEAPON{w}_FORWARD", v(wk, "MOVE_FORWARD")))
     if "TURN_LEFT_RIGHT_DELTA" in idx:
         macro_specs.append(("TURN_DELTA", v("TURN_LEFT_RIGHT_DELTA")))
     if "LOOK_UP_DOWN_DELTA" in idx:
