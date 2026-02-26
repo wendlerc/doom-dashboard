@@ -538,7 +538,7 @@
         </div>
         <div class="form-group">
           <span class="form-label">DURATION (s)</span>
-          <input class="form-number" type="number" id="prev-timelimit" value="30" min="5" max="300" step="5" />
+          <input class="form-number" type="number" id="prev-timelimit" value="120" min="5" max="1800" step="5" />
         </div>
       </div>
 
@@ -564,6 +564,9 @@
 
       <div id="preview-result">
         <video id="prev-video" autoplay loop muted controls></video>
+        <div style="padding:8px 14px;background:var(--surface2);border-top:1px solid var(--border)">
+          <a id="preview-open-link" href="#" target="_blank" rel="noopener noreferrer" style="font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--accent)">Open preview video in new tab</a>
+        </div>
         <div id="preview-meta"></div>
       </div>
 
@@ -680,11 +683,17 @@
       for (const s of samples) {
         const rewardClass = s.total_reward > 0 ? 'pos' : s.total_reward < 0 ? 'neg' : 'neu';
         const durMin = (s.duration_s / 60).toFixed(1);
+        const isHeadToHead = s.total_reward_p1 !== undefined && s.total_reward_p2 !== undefined;
         const uid = 'v' + Math.random().toString(36).slice(2);
+        const rewardHtml = isHeadToHead
+          ? `<span class=\"stat-label\">R1 / R2</span>
+             <span class=\"stat-value neu\">${Number(s.total_reward_p1).toFixed(1)} / ${Number(s.total_reward_p2).toFixed(1)}</span>`
+          : `<span class=\"stat-label\">Reward</span>
+             <span class=\"stat-value ${rewardClass}\">${s.total_reward.toFixed(1)}</span>`;
         grid.insertAdjacentHTML('beforeend', `
       <div class="map-card">
         <div class="card-video-wrap">
-          <video id="${uid}" src="/videos/${s.video}" loop muted preload="auto"
+          <video id="${uid}" src="/videos/${s.video}?v=${Date.now()}" loop muted preload="auto"
                  style="cursor:pointer"
                  onmouseenter="this.play();this.controls=true"
                  onmouseleave="this.pause();this.currentTime=0;this.controls=false">
@@ -698,8 +707,7 @@
           <div class="card-scenario">${s.scenario}</div>
           <div class="stat-row">
             <div class="stat-chip">
-              <span class="stat-label">Reward</span>
-              <span class="stat-value ${rewardClass}">${s.total_reward.toFixed(1)}</span>
+              ${rewardHtml}
             </div>
             <div class="stat-chip">
               <span class="stat-label">Steps</span>
@@ -840,6 +848,15 @@
       if (!matchEnabled) return;
       const polName = document.getElementById('prev-policy').value || '';
       const scSelect = document.getElementById('prev-scenario');
+      const pol = (_cfg.policies || []).find(p => p.name === polName);
+      if (pol && pol.expected_scenario) {
+        const key = _canonName(pol.expected_scenario);
+        const exact = (_cfg.scenarios || []).find(s => _canonName(s.cfg || s.name) === key || _canonName(s.name) === key);
+        if (exact) {
+          scSelect.value = exact.name;
+          return;
+        }
+      }
       const polCanon = _canonName(polName.replace(/^ppo[-_]?/i, ''));
       const target = (_cfg.scenarios || []).find(s => polCanon && _canonName(s.name).includes(polCanon));
       if (target) scSelect.value = target.name;
@@ -850,8 +867,10 @@
       const btn = document.getElementById('prev-btn');
       const errEl = document.getElementById('preview-error');
       const resEl = document.getElementById('preview-result');
+      const metaEl = document.getElementById('preview-meta');
       errEl.style.display = 'none';
       resEl.style.display = 'none';
+      metaEl.textContent = '';
 
       const body = {
         scenario: document.getElementById('prev-scenario').value,
@@ -863,18 +882,35 @@
         map: document.getElementById('prev-map').value,
       };
 
-      const res = await fetch('/api/generate-preview', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      });
-      const json = await res.json();
+      let res, json;
+      try {
+        res = await fetch('/api/generate-preview', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        json = await res.json();
+      } catch (e) {
+        errEl.textContent = 'Could not reach dashboard server. Check port-forwarding and refresh.';
+        errEl.style.display = 'block';
+        return;
+      }
       if (!json.ok) { errEl.textContent = json.error; errEl.style.display = 'block'; return; }
 
       btn.innerHTML = '<span class="spinner"></span> Generating…';
       btn.disabled = true;
+      metaEl.textContent = 'Generating preview...';
 
       if (_prevPoll) clearInterval(_prevPoll);
       _prevPoll = setInterval(async () => {
-        const st = await fetch('/api/preview-status').then(r => r.json());
+        let st;
+        try {
+          st = await fetch('/api/preview-status').then(r => r.json());
+        } catch (e) {
+          clearInterval(_prevPoll);
+          btn.innerHTML = '▶ Generate Preview'; btn.disabled = false;
+          errEl.textContent = 'Lost connection while waiting for preview. Try again.';
+          errEl.style.display = 'block';
+          return;
+        }
         if (st.error) {
           clearInterval(_prevPoll);
           btn.innerHTML = '▶ Generate Preview'; btn.disabled = false;
@@ -883,8 +919,12 @@
           clearInterval(_prevPoll);
           btn.innerHTML = '▶ Generate Preview'; btn.disabled = false;
           const vid = document.getElementById('prev-video');
-          vid.src = '/previews/' + st.video + '?t=' + Date.now();
-          vid.load(); vid.play();
+          const videoUrl = '/previews/' + st.video + '?t=' + Date.now();
+          vid.src = videoUrl;
+          const openLink = document.getElementById('preview-open-link');
+          openLink.href = videoUrl;
+          vid.load();
+          vid.play().catch(() => {});
           const m = st.meta;
           document.getElementById('preview-meta').innerHTML =
             `Reward: <b style="color:${m.total_reward >= 0 ? '#22c55e' : '#ef4444'}">${m.total_reward.toFixed(1)}</b> &nbsp;|
@@ -894,6 +934,12 @@
          FPS: <b>${m.fps}</b> &nbsp;|
          Map: <b>${m.map || 'default'}</b>`;
           resEl.style.display = 'block';
+          resEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } else if (!st.running && !st.video) {
+          clearInterval(_prevPoll);
+          btn.innerHTML = '▶ Generate Preview'; btn.disabled = false;
+          errEl.textContent = 'Preview finished but no video was returned. Check server logs.';
+          errEl.style.display = 'block';
         }
       }, 2000);
     }

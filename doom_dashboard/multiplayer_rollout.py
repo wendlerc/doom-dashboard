@@ -91,24 +91,48 @@ pol = load_policy(PolicyConfig(**pol_json))
 
 result = {"frames":[], "actions":[], "rewards":[], "game_vars":[],
           "button_names":[], "duration_s":0.0, "game_tics":0}
+_TRACKED_VARS = [
+    vzd.GameVariable.FRAGCOUNT,
+    vzd.GameVariable.KILLCOUNT,
+    vzd.GameVariable.DEATHCOUNT,
+    vzd.GameVariable.HITCOUNT,
+    vzd.GameVariable.HITS_TAKEN,
+    vzd.GameVariable.DAMAGECOUNT,
+    vzd.GameVariable.DAMAGE_TAKEN,
+    vzd.GameVariable.HEALTH,
+]
+def _read_vars(game):
+    vals = []
+    for v in _TRACKED_VARS:
+        try:
+            vals.append(float(game.get_game_variable(v)))
+        except Exception:
+            vals.append(0.0)
+    return np.asarray(vals, dtype=np.float32)
 try:
     g = vzd.DoomGame()
     g.load_config(cfg_path)
     g.set_doom_map(doom_map)
     g.set_window_visible(False)
     g.set_mode(vzd.Mode.ASYNC_PLAYER)
-    g.set_screen_format(vzd.ScreenFormat.CRCGCB)
+    # Match Gymnasium training env defaults (SB3 checkpoints were trained on RGB24).
+    g.set_screen_format(vzd.ScreenFormat.RGB24)
     g.set_screen_resolution(_RES_MAP.get(res, vzd.ScreenResolution.RES_320X240))
     g.set_render_hud(False)
     if is_host:
+        # NOTE: Do NOT pass "-deathmatch" here. The -deathmatch flag tells ZDoom
+        # to use deathmatch start spawn points (Thing type 11). Many ViZDoom WADs
+        # (e.g. deathmatch.wad) lack these and the engine segfaults (signal 11).
+        # The +sv_* CVARs below already configure deathmatch-style gameplay rules
+        # (forced respawn, weapon stay, etc.) without requiring DM spawn points.
         g.add_game_args(
-            f"-host 2 -port {port} +viz_connect_timeout 120 "
-            f"-deathmatch +timelimit {timelimit:.1f} "
-            "+sv_forcerespawn 1 +sv_noautoaim 1 +sv_respawnprotect 1 "
-            "+sv_spawnfarthest 1 +sv_nocrouch 1 +viz_respawn_delay 0 +viz_nocheat 1"
+            f"-host 2 -port {port} +viz_connect_timeout 30 "
+            f"+timelimit {timelimit:.1f} "
+            "+sv_forcerespawn 1 +sv_noautoaim 0 +sv_respawnprotect 1 "
+            "+sv_spawnfarthest 0 +sv_nocrouch 1 +viz_respawn_delay 0 +viz_nocheat 1"
         )
     else:
-        g.add_game_args(f"-join 127.0.0.1 -port {port} +viz_connect_timeout 120")
+        g.add_game_args(f"-join 127.0.0.1 -port {port} +viz_connect_timeout 30")
     g.add_game_args(f"+name {'P1' if is_host else 'P2'} +colorset {0 if is_host else 3}")
     g.init()
     btns = [str(b) for b in g.get_available_buttons()]
@@ -118,9 +142,13 @@ try:
         if s is None:
             g.advance_action(frame_skip)
             continue
-        obs = np.transpose(s.screen_buffer, (1, 2, 0))
-        gv  = np.array(s.game_variables, dtype=np.float32) if s.game_variables else np.zeros(1)
-        act = pol.predict(obs, btns)
+        buf = s.screen_buffer
+        if buf.ndim == 3 and buf.shape[0] in (1, 3, 4) and buf.shape[-1] not in (1, 3, 4):
+            obs = np.transpose(buf, (1, 2, 0))
+        else:
+            obs = buf
+        gv  = _read_vars(g)
+        act = pol.predict(obs, btns, game_variables=gv)
         rew = g.make_action([bool(a) for a in act], frame_skip)
         if g.is_player_dead():
             g.respawn_player()
@@ -160,8 +188,56 @@ def rollout_multiplayer_episode(
     tmpdir   = tempfile.mkdtemp(prefix="doom_mp_")
     out1     = os.path.join(tmpdir, "p1.pkl")
     out2     = os.path.join(tmpdir, "p2.pkl")
+    log1     = os.path.join(tmpdir, "p1.log")
+    log2     = os.path.join(tmpdir, "p2.log")
     script   = os.path.join(tmpdir, "player.py")
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    # Some custom cfg files reference WADs via relative paths.
+    # Materialize cfg + WAD in tmpdir so both subprocesses resolve assets reliably.
+    resolved_cfg_path = cfg_path
+    try:
+        with open(cfg_path, "r") as f:
+            cfg_text = f.read()
+        wad_ref = None
+        for ln in cfg_text.splitlines():
+            raw = ln.strip()
+            if not raw or raw.startswith("#"):
+                continue
+            if raw.lower().startswith("doom_scenario_path"):
+                wad_ref = raw.split("=", 1)[1].strip().strip("\"'")
+                break
+        if wad_ref:
+            if os.path.isabs(wad_ref):
+                wad_ok = os.path.exists(wad_ref)
+            else:
+                local = os.path.join(os.path.dirname(os.path.abspath(cfg_path)), wad_ref)
+                wad_ok = os.path.exists(local)
+                if not wad_ok:
+                    src = os.path.join(vzd.scenarios_path, wad_ref)
+                    if os.path.exists(src):
+                        dst_cfg = os.path.join(tmpdir, os.path.basename(cfg_path))
+                        dst_wad = os.path.join(tmpdir, wad_ref)
+                        import shutil
+                        shutil.copy2(cfg_path, dst_cfg)
+                        shutil.copy2(src, dst_wad)
+                        resolved_cfg_path = dst_cfg
+                        wad_ok = True
+            if not wad_ok:
+                raise FileNotFoundError(f"Cannot resolve doom_scenario_path '{wad_ref}' for cfg '{cfg_path}'")
+    except Exception:
+        # Keep legacy behavior when cfg parsing fails.
+        resolved_cfg_path = cfg_path
+
+    def _absolutize_policy_path(pol: dict) -> dict:
+        out = dict(pol)
+        p = out.get("path")
+        if p and not os.path.isabs(p):
+            out["path"] = os.path.abspath(os.path.join(root_dir, p))
+        return out
+
+    policy_p1_dict = _absolutize_policy_path(policy_p1_dict)
+    policy_p2_dict = _absolutize_policy_path(policy_p2_dict)
 
     with open(script, "w") as f:
         f.write(_PLAYER_SCRIPT)
@@ -169,7 +245,7 @@ def rollout_multiplayer_episode(
     common_env = {
         **os.environ,
         "DOOM_DASH_ROOT": root_dir,
-        "CFG_PATH":       cfg_path,
+        "CFG_PATH":       resolved_cfg_path,
         "DOOM_MAP":       doom_map,
         "PORT":           str(port),
         "TIMELIMIT":      str(timelimit_minutes),
@@ -177,40 +253,66 @@ def rollout_multiplayer_episode(
         "RESOLUTION":     render_resolution,
     }
 
-    host_proc = subprocess.Popen(
-        [sys.executable, script],
-        env={**common_env, "IS_HOST": "1",
-             "POLICY_JSON": json.dumps(policy_p1_dict), "OUT_FILE": out1},
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    with open(log1, "wb") as host_log, open(log2, "wb") as join_log:
+        host_proc = subprocess.Popen(
+            [sys.executable, script],
+            env={**common_env, "IS_HOST": "1",
+                 "POLICY_JSON": json.dumps(policy_p1_dict), "OUT_FILE": out1},
+            stdout=host_log, stderr=subprocess.STDOUT,
+        )
 
-    # Brief delay so host binds the port before join tries to connect
-    time.sleep(3.0)
+        # Brief delay so host binds the port before join tries to connect
+        time.sleep(1.0)
 
-    join_proc = subprocess.Popen(
-        [sys.executable, script],
-        env={**common_env, "IS_HOST": "0",
-             "POLICY_JSON": json.dumps(policy_p2_dict), "OUT_FILE": out2},
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+        join_proc = subprocess.Popen(
+            [sys.executable, script],
+            env={**common_env, "IS_HOST": "0",
+                 "POLICY_JSON": json.dumps(policy_p2_dict), "OUT_FILE": out2},
+            stdout=join_log, stderr=subprocess.STDOUT,
+        )
 
-    timeout = timelimit_minutes * 60 + 180
-    try:
-        host_proc.wait(timeout=timeout)
-        join_proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        host_proc.kill()
-        join_proc.kill()
+        # Keep hard timeout tight to avoid hanging on broken network handshakes.
+        timeout = timelimit_minutes * 60 + 35
+        t0 = time.time()
+        while True:
+            h = host_proc.poll()
+            j = join_proc.poll()
+            if h is not None and j is not None:
+                break
+            if time.time() - t0 > timeout:
+                host_proc.kill()
+                join_proc.kill()
+                break
+            # If one side died quickly, don't leave the other side hanging forever.
+            if (h is not None and j is None) or (j is not None and h is None):
+                if time.time() - t0 > 8:
+                    host_proc.kill()
+                    join_proc.kill()
+                    break
+            time.sleep(0.2)
 
     # Load results
-    def _load(path: str, label: str) -> dict:
+    def _tail(path: str, n: int = 40) -> str:
         if not os.path.exists(path):
+            return ""
+        try:
+            with open(path, "r", errors="replace") as f:
+                lines = f.readlines()
+            return "".join(lines[-n:]).strip()
+        except Exception:
+            return ""
+
+    def _load(path: str, label: str, log_path: str) -> dict:
+        if not os.path.exists(path):
+            log_tail = _tail(log_path)
+            if log_tail:
+                return {"error": f"{label} result file missing. log:\n{log_tail}"}
             return {"error": f"{label} result file missing"}
         with open(path, "rb") as f:
             return pickle.load(f)
 
-    r1 = _load(out1, "host")
-    r2 = _load(out2, "join")
+    r1 = _load(out1, "host", log1)
+    r2 = _load(out2, "join", log2)
 
     # Cleanup
     import shutil

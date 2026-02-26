@@ -21,6 +21,8 @@ BUILTIN_SCENARIOS = {
         "defend_the_center", "defend_the_line",
         "health_gathering", "health_gathering_supreme",
         "my_way_home", "deadly_corridor", "deathmatch",
+        "cig",
+        "multi_duel",
         "predict_position", "take_cover",
     ]
 }

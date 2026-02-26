@@ -62,6 +62,13 @@ def _parse_resolution(s: str) -> vzd.ScreenResolution:
     raise ValueError(f"Unknown resolution '{s}'. Available: {sorted(_RES_MAP)}")
 
 
+def _screen_to_hwc(buf: np.ndarray) -> np.ndarray:
+    """Convert VizDoom screen buffer to HxWxC uint8."""
+    if buf.ndim == 3 and buf.shape[0] in (1, 3, 4) and buf.shape[-1] not in (1, 3, 4):
+        return np.transpose(buf, (1, 2, 0))
+    return buf
+
+
 # ──────────────────────────── main rollout ───────────────────────
 
 def rollout_episode(
@@ -95,7 +102,8 @@ def rollout_episode(
         game.set_doom_map(doom_map)
     game.set_window_visible(False)
     game.set_mode(vzd.Mode.PLAYER)
-    game.set_screen_format(vzd.ScreenFormat.CRCGCB)  # C×H×W uint8
+    # Match Gymnasium training env defaults (SB3 checkpoints were trained on RGB24).
+    game.set_screen_format(vzd.ScreenFormat.RGB24)  # C×H×W uint8
 
     res = render_resolution or scenario.render_resolution
     hud = scenario.render_hud if render_hud is None else bool(render_hud)
@@ -128,14 +136,11 @@ def rollout_episode(
         if state is None:
             break
 
-        # Build observation: convert C×H×W → H×W×C
-        buf = state.screen_buffer  # np.ndarray (C, H, W) uint8
-        obs = np.transpose(buf, (1, 2, 0))  # → (H, W, C)
-
-        action_arr = policy.predict(obs, button_names)
-        action_list = [bool(a) for a in action_arr]
+        obs = _screen_to_hwc(state.screen_buffer)
 
         gv = np.array(state.game_variables, dtype=np.float32) if state.game_variables is not None else np.zeros(1)
+        action_arr = policy.predict(obs, button_names, game_variables=gv)
+        action_list = [bool(a) for a in action_arr]
         reward = game.make_action(action_list, eff_frame_skip)
 
         if record_frames:

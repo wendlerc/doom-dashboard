@@ -4,6 +4,8 @@ from __future__ import annotations
 import io
 import json
 import os
+import random
+import socket
 import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -11,6 +13,7 @@ from typing import Any, Dict, Optional
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 from doom_dashboard.config import Config
+from doom_dashboard.alignment import policy_matches_scenario, infer_policy_scenario_key, scenario_key
 
 
 def create_app(config: Config) -> Flask:
@@ -53,7 +56,12 @@ def create_app(config: Config) -> Flask:
                 for s in config.scenarios
             ],
             "policies": [
-                {"name": p.name, "type": p.type, "path": p.path}
+                {
+                    "name": p.name,
+                    "type": p.type,
+                    "path": p.path,
+                    "expected_scenario": infer_policy_scenario_key(p),
+                }
                 for p in config.policies
             ],
             "dataset": {
@@ -148,6 +156,18 @@ def create_app(config: Config) -> Flask:
     previews_dir = Path(samples_dir).parent / "previews"
     previews_dir.mkdir(parents=True, exist_ok=True)
 
+    def _find_preview_port(start: int = 7200, end: int = 7600, step: int = 10) -> int:
+        for p in range(start, end, step):
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                s.bind(("127.0.0.1", p))
+                return p
+            except OSError:
+                pass
+            finally:
+                s.close()
+        raise RuntimeError(f"No free preview port in range [{start}, {end})")
+
     @app.route("/previews/<path:filename>")
     def serve_preview(filename: str):
         return send_from_directory(str(previews_dir), filename)
@@ -164,9 +184,9 @@ def create_app(config: Config) -> Flask:
         body = request.json or {}
         scenario_name   = body.get("scenario")
         policy_name     = body.get("policy")
-        frame_skip      = int(body.get("frame_skip", 4))
+        frame_skip      = max(1, int(body.get("frame_skip", 4)))
         resolution      = body.get("resolution", "RES_320X240")
-        timelimit_secs  = int(body.get("timelimit_secs", 30))
+        timelimit_secs  = max(5, min(int(body.get("timelimit_secs", 120)), 1800))
         render_hud      = bool(body.get("render_hud", False))
         map_name        = (body.get("map") or "").strip() or None
 
@@ -175,6 +195,8 @@ def create_app(config: Config) -> Flask:
         pol_cfg = next((p for p in config.policies if p.name == policy_name), None)
         if sc is None or pol_cfg is None:
             return jsonify({"ok": False, "error": f"Unknown scenario '{scenario_name}' or policy '{policy_name}'"}), 400
+        if pol_cfg.type != "random" and not policy_matches_scenario(pol_cfg, sc):
+            return jsonify({"ok": False, "error": "Selected policy is not aligned with that scenario's training setup."}), 400
 
         with _preview_lock:
             _preview_state["running"] = True
@@ -184,21 +206,66 @@ def create_app(config: Config) -> Flask:
 
         def _run():
             from doom_dashboard.policies import load_policy
-            from doom_dashboard.rollout import rollout_episode
+            from doom_dashboard.rollout import rollout_episode, EpisodeData
+            from doom_dashboard.multiplayer_rollout import rollout_multiplayer_episode
             from doom_dashboard.annotate import annotate_and_encode
             import time as _time
             policy = None
             try:
-                policy = load_policy(pol_cfg)
-                ep = rollout_episode(
-                    scenario=sc,
-                    policy=policy,
-                    render_resolution=resolution,
-                    frame_skip=frame_skip,
-                    max_steps=int(timelimit_secs * 35 / frame_skip),
-                    render_hud=render_hud,
-                    doom_map=map_name,
-                )
+                sc_key = scenario_key(sc)
+                if sc_key in {"multi_duel", "cig"}:
+                    from doom_dashboard.mp_dataset_gen import MP_SCENARIOS
+                    mp_meta = MP_SCENARIOS["multi_duel" if sc_key == "multi_duel" else "cig_fullaction"]
+                    chosen_map = map_name or random.choice(mp_meta["maps"])
+                    p1 = dict(
+                        name=pol_cfg.name,
+                        type=pol_cfg.type,
+                        path=pol_cfg.path,
+                        algo=pol_cfg.algo,
+                        arch=pol_cfg.arch,
+                        action_size=pol_cfg.action_size,
+                        device=pol_cfg.device,
+                    )
+                    p2 = dict(name="Random", type="random", path=None, algo="PPO", arch="DuelQNet", action_size=None, device="auto")
+                    ep_mp = rollout_multiplayer_episode(
+                        cfg_path=sc.cfg_path(),
+                        scenario_name=sc_key,
+                        doom_map=chosen_map,
+                        policy_p1_dict=p1,
+                        policy_p2_dict=p2,
+                        timelimit_minutes=float(timelimit_secs) / 60.0,
+                        frame_skip=frame_skip,
+                        render_resolution=resolution,
+                        render_hud=render_hud,
+                        port=_find_preview_port(),
+                    )
+                    ep = EpisodeData(
+                        frames=ep_mp.frames_p1,
+                        actions=ep_mp.actions_p1,
+                        button_names=ep_mp.button_names,
+                        rewards=ep_mp.rewards_p1,
+                        game_vars=ep_mp.game_vars_p1,
+                        total_reward=float(sum(ep_mp.rewards_p1)),
+                        scenario_name=sc.name,
+                        policy_name=f"{pol_cfg.name} vs Random",
+                        cfg_path=ep_mp.cfg_path,
+                        frame_skip=frame_skip,
+                        steps=len(ep_mp.actions_p1),
+                        duration_s=float(ep_mp.duration_s),
+                        game_tics=int(ep_mp.game_tics),
+                        metadata=dict(mode="multiplayer", opponent="Random"),
+                    )
+                else:
+                    policy = load_policy(pol_cfg)
+                    ep = rollout_episode(
+                        scenario=sc,
+                        policy=policy,
+                        render_resolution=resolution,
+                        frame_skip=frame_skip,
+                        max_steps=int(timelimit_secs * 35 / frame_skip),
+                        render_hud=render_hud,
+                        doom_map=map_name,
+                    )
                 fname = f"preview_{scenario_name}__{policy_name}_{int(_time.time())}.mp4".lower().replace(" ", "_").replace("-", "")
                 out_path = previews_dir / fname
                 # Match encoded playback speed to in-game time at current frame_skip.

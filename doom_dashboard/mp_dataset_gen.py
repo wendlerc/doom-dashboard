@@ -75,8 +75,23 @@ MP_SCENARIOS = {
         "maps": CIG_MAPS,
         "timelimit_min": 5.0,
     },
+    "cig_fullaction": {
+        "cfg": str(Path(__file__).resolve().parent / "scenarios" / "cig_fullaction.cfg"),
+        "maps": CIG_MAPS,
+        "timelimit_min": 5.0,
+    },
     "multi_duel": {
         "cfg": str(os.path.join(vzd.scenarios_path, "multi_duel.cfg")),
+        "maps": ["map01"],
+        "timelimit_min": 3.0,
+    },
+    "deathmatch_compact": {
+        "cfg": str(Path(__file__).resolve().parent / "scenarios" / "deathmatch_compact.cfg"),
+        "maps": ["map01"],
+        "timelimit_min": 3.0,
+    },
+    "deathmatch_nomonsters": {
+        "cfg": str(Path(__file__).resolve().parent / "scenarios" / "deathmatch_nomonsters.cfg"),
         "maps": ["map01"],
         "timelimit_min": 3.0,
     },
@@ -362,4 +377,3 @@ def generate_multiplayer_dataset(
     print(f"\n[mp_dataset_gen] Done. {accumulated_secs/3600:.3f} h collected, "
           f"{len(shards)} shards in '{out_dir}'")
     return str(out_dir)
-

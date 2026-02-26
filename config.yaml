@@ -25,8 +25,26 @@ scenarios:
     render_resolution: "RES_320X240"
     render_hud: false
 
+  - name: "MultiDuel"
+    cfg: "multi_duel"
+    frame_skip: 4
+    render_resolution: "RES_320X240"
+    render_hud: false
+
+  - name: "EliminationFull"
+    cfg: "doom_dashboard/scenarios/cig_fullaction.cfg"
+    frame_skip: 4
+    render_resolution: "RES_320X240"
+    render_hud: false
+
   - name: "HealthGathering"
     cfg: "health_gathering"
+    frame_skip: 4
+    render_resolution: "RES_320X240"
+    render_hud: false
+
+  - name: "MyWayHome"
+    cfg: "my_way_home"
     frame_skip: 4
     render_resolution: "RES_320X240"
     render_hud: false
@@ -77,6 +95,18 @@ policies:
     algo: "PPO"
     device: "auto"
 
+  - name: "PPO-Deathmatch-Fix"
+    type: "sb3"
+    path: "trained_policies/deathmatch_dm_fix_v4_smoke_best/best_model.zip"
+    algo: "PPO"
+    device: "auto"
+
+  - name: "PPO-multi_duel_elim_good_v2"
+    type: "sb3"
+    path: "trained_policies/multi_duel_elim_good_v2.zip"
+    algo: "PPO"
+    device: "auto"
+
 
 # ─── Dashboard ───────────────────────────────────────────────────
 dashboard:
@@ -96,8 +126,9 @@ dataset:
   scenario_ratios:
     Basic:            0.15
     DefendTheCenter:  0.25
-    Deathmatch:       0.30
+    Deathmatch:       0.20
     HealthGathering:  0.20
+    MyWayHome:        0.10
     DeadlyCorridor:   0.10
 
   # Fraction of gameplay time for each policy (must sum to 1).

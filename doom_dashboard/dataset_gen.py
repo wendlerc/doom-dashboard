@@ -44,6 +44,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from doom_dashboard.config import Config, DatasetConfig, PolicyConfig, ScenarioConfig
+from doom_dashboard.alignment import policy_matches_scenario
 from doom_dashboard.policies import load_policy, RandomPolicy, BasePolicy
 from doom_dashboard.rollout import rollout_episode, EpisodeData
 
@@ -95,7 +96,7 @@ class InferenceServer(threading.Thread):
 
         while True:
             # Collect a micro-batch
-            requests: List[Tuple[int, np.ndarray, List[str]]] = []
+            requests: List[Tuple[int, np.ndarray, List[str], np.ndarray]] = []
             deadline = time.perf_counter() + self.batch_timeout_s
             while len(requests) < self.max_batch_size:
                 try:
@@ -103,7 +104,7 @@ class InferenceServer(threading.Thread):
                     item = self.req_queue.get(timeout=timeout)
                     if item == self.STOP:
                         return
-                    requests.append(item)  # (worker_id, obs, button_names)
+                    requests.append(item)  # (worker_id, obs, button_names, game_variables)
                 except queue.Empty:
                     break
 
@@ -112,8 +113,8 @@ class InferenceServer(threading.Thread):
 
             # Dispatch individually (batched GPU inference is only meaningful
             # for large Torch models; SB3 predict() handles its own batching)
-            for wid, obs, btn_names in requests:
-                action = self._policy.predict(obs, btn_names)
+            for wid, obs, btn_names, game_variables in requests:
+                action = self._policy.predict(obs, btn_names, game_variables=game_variables)
                 self.res_queues[wid].put(action)
 
         if self._policy:
@@ -134,8 +135,14 @@ class RemotePolicy(BasePolicy):
         self._req = req_queue
         self._res = res_queue
 
-    def predict(self, obs: np.ndarray, available_buttons=None) -> np.ndarray:
-        self._req.put((self._wid, obs, available_buttons or []))
+    def predict(
+        self,
+        obs: np.ndarray,
+        available_buttons=None,
+        game_variables: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        gv = np.asarray(game_variables, dtype=np.float32).reshape(-1) if game_variables is not None else np.zeros(1, dtype=np.float32)
+        self._req.put((self._wid, obs, available_buttons or [], gv))
         return self._res.get()
 
 
@@ -299,6 +306,8 @@ def _build_work_schedule(
         sc_secs = total_secs * sc_ratios[sc.name]
         for pol in policy_cfgs:
             if pol.name not in pol_ratios:
+                continue
+            if pol.type != "random" and not policy_matches_scenario(pol, sc):
                 continue
             pol_secs = sc_secs * pol_ratios[pol.name]
             n_eps = max(1, math.ceil(pol_secs / ep_secs * 1.15))  # 15% buffer
