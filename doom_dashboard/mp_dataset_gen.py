@@ -95,6 +95,11 @@ MP_SCENARIOS = {
         "maps": ["map01"],
         "timelimit_min": 3.0,
     },
+    "deathmatch_fullaction": {
+        "cfg": str(Path(__file__).resolve().parent / "scenarios" / "deathmatch_fullaction.cfg"),
+        "maps": ["map01"],
+        "timelimit_min": 5.0,
+    },
 }
 
 

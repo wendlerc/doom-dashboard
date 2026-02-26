@@ -640,7 +640,7 @@ def generate_elim_videos(
               help="Optional run name; default: auto timestamped stem.")
 @click.option("--scenario", default="deathmatch_compact", show_default=True,
               type=click.Choice(["deathmatch_compact", "deathmatch_nomonsters",
-                                 "cig_fullaction", "cig", "deathmatch", "multi_duel"]))
+                                 "deathmatch_fullaction", "cig_fullaction", "cig", "deathmatch", "multi_duel"]))
 @click.option("--map", "doom_map", default="", show_default=True,
               help="Map name (e.g. map01); empty = random map from scenario.")
 @click.option("--timelimit", default=5.0, show_default=True, type=float,
@@ -652,6 +652,10 @@ def generate_elim_videos(
 @click.option("--bots", default=1, show_default=True, type=int,
               help="Number of Doom bots to add to the match.")
 @click.option("--render-hud/--no-render-hud", default=False, show_default=True)
+@click.option("--fullscreen/--no-fullscreen", default=False, show_default=True,
+              help="Launch game in fullscreen mode.")
+@click.option("--record-audio/--no-record-audio", default=True, show_default=True,
+              help="Capture game audio into the output video (requires OpenAL; disables live sound during play).")
 @click.option("--save-video/--no-save-video", default=True, show_default=True)
 @click.option("--fps", default=35.0, show_default=True, type=float,
               help="Output FPS for saved demo video.")
@@ -666,6 +670,8 @@ def record_human_demo(
     resolution: str,
     bots: int,
     render_hud: bool,
+    fullscreen: bool,
+    record_audio: bool,
     save_video: bool,
     fps: float,
 ):
@@ -737,12 +743,22 @@ def record_human_demo(
     game = vzd.DoomGame()
     game.load_config(cfg_path)
     game.set_doom_map(map_name)
+    # Override episode_timeout to match our timelimit (cfg often has 4200 = 2 min)
+    timeout_tics = int(float(timelimit) * 60 * 35)  # minutes -> seconds -> tics @ 35 tics/sec
+    game.set_episode_timeout(max(4200, timeout_tics))
     game.set_window_visible(True)
     game.set_mode(vzd.Mode.SPECTATOR)
     game.set_screen_format(vzd.ScreenFormat.RGB24)
     game.set_screen_resolution(res_enum)
     game.set_render_hud(render_hud)
-    game.set_sound_enabled(True)
+    # Disable sound when not recording audio — avoids OpenAL init that can crash on macOS/XQuartz
+    game.set_sound_enabled(record_audio)
+    if record_audio:
+        game.set_audio_buffer_enabled(True)
+        game.set_audio_sampling_rate(vzd.SamplingRate.SR_22050)
+        game.set_audio_buffer_size(max(1, int(frame_skip)))
+        # Workaround for OpenAL 1.19 "no audio in buffer" bug on some systems
+        game.add_game_args("+snd_efx 0")
     # NOTE: Do NOT pass "-deathmatch" here.  The flag tells ZDoom to use
     # deathmatch start spawn points (Thing type 11); many ViZDoom WADs
     # lack these and the engine segfaults.  The +sv_* CVARs already
@@ -752,6 +768,8 @@ def record_human_demo(
         "+sv_forcerespawn 1 +sv_noautoaim 1 +sv_respawnprotect 1 "
         "+sv_spawnfarthest 1 +sv_nocrouch 1 +viz_respawn_delay 0 +viz_nocheat 1"
     )
+    if fullscreen:
+        game.add_game_args("+fullscreen 1")
     game.add_game_args("+name HumanRecorder +colorset 2")
     game.init()
 
@@ -770,6 +788,7 @@ def record_human_demo(
     actions: List[np.ndarray] = []
     rewards: List[float] = []
     game_vars: List[np.ndarray] = []
+    audio_slices: List[np.ndarray] = []
 
     t0 = time.perf_counter()
     try:
@@ -802,6 +821,13 @@ def record_human_demo(
             actions.append(act.copy())
             rewards.append(rew)
             game_vars.append(gv.copy())
+            if record_audio and hasattr(st, "audio_buffer") and st.audio_buffer is not None:
+                try:
+                    ab = np.asarray(st.audio_buffer)
+                    if ab.size > 0:
+                        audio_slices.append(ab.copy())
+                except Exception:
+                    pass
     finally:
         total_reward = float(game.get_total_reward())
         game_tics = int(game.get_episode_time())
@@ -824,13 +850,22 @@ def record_human_demo(
 
     npz_path = out_dir / f"{stem}.npz"
     meta_path = out_dir / f"{stem}.meta.json"
-    np.savez_compressed(
-        npz_path,
+    audio_np = None
+    if record_audio and audio_slices:
+        try:
+            audio_np = np.concatenate(audio_slices, axis=0)
+        except Exception:
+            audio_np = None
+    save_dict = dict(
         frames=frames_np,
         actions=actions_np,
         rewards=rewards_np,
         game_vars=game_vars_np,
     )
+    if audio_np is not None and audio_np.size > 0:
+        save_dict["audio"] = audio_np
+        save_dict["audio_sample_rate"] = 22050
+    np.savez_compressed(npz_path, **save_dict)
 
     meta = {
         "name": stem,
@@ -881,7 +916,11 @@ def record_human_demo(
             metadata={"map": map_name, "resolution": resolution, "bots": int(max(0, bots))},
         )
         eff_fps = float(fps) if fps > 0 else max(1, round(35.0 / max(1, frame_skip), 2))
-        annotate_and_encode(ep, str(video_path), fps=eff_fps)
+        annotate_and_encode(
+            ep, str(video_path), fps=eff_fps,
+            audio=audio_np if (audio_np is not None and audio_np.size > 0 and audio_np.max() != 0) else None,
+            audio_sample_rate=22050,
+        )
 
     click.echo("\n✓ Human demo saved")
     click.echo(f"  data: {npz_path}")

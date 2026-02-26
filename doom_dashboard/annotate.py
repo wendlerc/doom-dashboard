@@ -8,10 +8,13 @@ Takes an EpisodeData and renders an annotated MP4 with:
   - Map name + policy name watermark
 
 Uses imageio + ffmpeg (no display required).
+Optional: mux game audio into the output when provided.
 """
 from __future__ import annotations
 
 import os
+import subprocess
+import tempfile
 from typing import Optional
 
 import numpy as np
@@ -106,6 +109,8 @@ def annotate_and_encode(
     out_path: str,
     fps: int = 30,
     annotate: bool = True,
+    audio: Optional[np.ndarray] = None,
+    audio_sample_rate: int = 22050,
 ) -> str:
     """Encode EpisodeData to an annotated MP4.
 
@@ -115,19 +120,26 @@ def annotate_and_encode(
     out_path:   Output .mp4 path (parent dir will be created)
     fps:        Output video FPS
     annotate:   If False, write raw frames (no overlays)
+    audio:      Optional (samples,) or (samples, ch) float32/int16 array; muxed into video when present
+    audio_sample_rate: Sample rate for audio (default 22050)
 
     Returns
     -------
     out_path (same as input)
     """
     import imageio
+    import wave
 
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
 
     total = len(episode.frames)
     cumulative_reward = 0.0
 
-    writer = imageio.get_writer(out_path, fps=fps, codec="libx264",
+    video_path = out_path
+    if audio is not None and audio.size > 0:
+        video_path = out_path + ".video_only.mp4"
+
+    writer = imageio.get_writer(video_path, fps=fps, codec="libx264",
                                  output_params=["-crf", "22", "-preset", "fast"])
     for i, (frame, action, reward) in enumerate(
         zip(episode.frames, episode.actions, episode.rewards)
@@ -149,5 +161,51 @@ def annotate_and_encode(
             out_frame = frame if frame.shape[2] == 3 else frame[:, :, :3]
         writer.append_data(out_frame)
     writer.close()
+
+    if audio is not None and audio.size > 0:
+        # Convert audio to int16 and write WAV, then mux with ffmpeg
+        arr = np.asarray(audio)
+        if arr.ndim == 2:
+            nchannels = arr.shape[1]
+            arr = arr.reshape(-1, nchannels)
+        else:
+            nchannels = 1
+            arr = arr.reshape(-1, 1)
+        if arr.dtype == np.float32 or arr.dtype == np.float64:
+            arr = (np.clip(arr, -1.0, 1.0) * 32767).astype(np.int16)
+        elif arr.dtype != np.int16:
+            arr = arr.astype(np.int16)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            wav_path = f.name
+        try:
+            with wave.open(wav_path, "wb") as wav:
+                wav.setnchannels(nchannels)
+                wav.setsampwidth(2)
+                wav.setframerate(audio_sample_rate)
+                wav.writeframes(arr.tobytes())
+            # Mux: ffmpeg -i video.mp4 -i audio.wav -c:v copy -c:a aac -shortest out.mp4
+            subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-i", video_path,
+                    "-i", wav_path,
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-shortest",
+                    out_path,
+                ],
+                check=True,
+                capture_output=True,
+            )
+        finally:
+            try:
+                os.unlink(wav_path)
+            except OSError:
+                pass
+            if video_path != out_path:
+                try:
+                    os.unlink(video_path)
+                except OSError:
+                    pass
 
     return out_path

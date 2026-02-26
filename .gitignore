@@ -17,6 +17,7 @@ trained_policies/*.pth
 dataset/
 mp_dataset/
 samples/
+human_demos/
 *.tar
 *.tar.gz
 *.npy
