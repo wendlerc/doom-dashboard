@@ -638,8 +638,9 @@ def generate_elim_videos(
               help="Where to save recorded demo files.")
 @click.option("--name", default=None,
               help="Optional run name; default: auto timestamped stem.")
-@click.option("--scenario", default="cig_fullaction", show_default=True,
-              type=click.Choice(["cig_fullaction", "cig", "deathmatch", "multi_duel"]))
+@click.option("--scenario", default="deathmatch_compact", show_default=True,
+              type=click.Choice(["deathmatch_compact", "deathmatch_nomonsters",
+                                 "cig_fullaction", "cig", "deathmatch", "multi_duel"]))
 @click.option("--map", "doom_map", default="", show_default=True,
               help="Map name (e.g. map01); empty = random map from scenario.")
 @click.option("--timelimit", default=5.0, show_default=True, type=float,
@@ -741,6 +742,7 @@ def record_human_demo(
     game.set_screen_format(vzd.ScreenFormat.RGB24)
     game.set_screen_resolution(res_enum)
     game.set_render_hud(render_hud)
+    game.set_sound_enabled(True)
     # NOTE: Do NOT pass "-deathmatch" here.  The flag tells ZDoom to use
     # deathmatch start spawn points (Thing type 11); many ViZDoom WADs
     # lack these and the engine segfaults.  The +sv_* CVARs already

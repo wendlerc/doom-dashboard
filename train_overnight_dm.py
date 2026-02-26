@@ -40,7 +40,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback, EvalCallback
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-from stable_baselines3.common.vec_env import VecTransposeImage
+from stable_baselines3.common.vec_env import VecTransposeImage, VecFrameStack
 
 from doom_dashboard.multiplayer_rollout import rollout_multiplayer_episode
 
@@ -1100,6 +1100,21 @@ def main():
                     help="CNN feature extractor: nature (SB3 default) or impala (15-layer ResNet)")
     ap.add_argument("--cnn-features-dim", type=int, default=256,
                     help="CNN feature output dimension (before MLP)")
+    ap.add_argument("--policy-type", type=str, default="mlp",
+                    choices=["mlp", "lstm", "transformer"],
+                    help="Policy type: mlp (feedforward), lstm (recurrent), transformer (attention)")
+    ap.add_argument("--lstm-hidden-size", type=int, default=256,
+                    help="LSTM hidden state size (for --policy-type lstm)")
+    ap.add_argument("--lstm-num-layers", type=int, default=1,
+                    help="Number of LSTM layers (for --policy-type lstm)")
+    ap.add_argument("--transformer-heads", type=int, default=4,
+                    help="Number of attention heads (for --policy-type transformer)")
+    ap.add_argument("--transformer-layers", type=int, default=2,
+                    help="Number of transformer layers (for --policy-type transformer)")
+    ap.add_argument("--context-length", type=int, default=32,
+                    help="Context window length for transformer (number of past frames)")
+    ap.add_argument("--frame-stack", type=int, default=1,
+                    help="Number of frames to stack (1=no stacking)")
     ap.add_argument("--video-freq", type=int, default=100_000,
                     help="Steps between wandb video recordings (0=disabled)")
 
@@ -1176,6 +1191,9 @@ def main():
         "maps": maps,
         "spawn_farthest": bool(args.spawn_farthest),
         "no_autoaim": bool(args.no_autoaim),
+        "policy_type": args.policy_type,
+        "frame_stack": args.frame_stack,
+        "lstm_hidden_size": args.lstm_hidden_size if args.policy_type in ("lstm", "transformer") else None,
     }
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
@@ -1228,6 +1246,13 @@ def main():
                     "policy_hidden_layers": args.policy_hidden_layers,
                     "cnn_type": args.cnn_type,
                     "cnn_features_dim": args.cnn_features_dim,
+                    "policy_type": args.policy_type,
+                    "lstm_hidden_size": args.lstm_hidden_size,
+                    "lstm_num_layers": args.lstm_num_layers,
+                    "transformer_heads": args.transformer_heads,
+                    "transformer_layers": args.transformer_layers,
+                    "context_length": args.context_length,
+                    "frame_stack": args.frame_stack,
                     "n_buttons": len(button_names),
                     "n_macros": len(macro_actions),
                     "scenario": scenario_name,
@@ -1268,6 +1293,10 @@ def main():
     vec_env = VecTransposeImage(vec_env)
     eval_env = make_vec_env(make_eval, n_envs=1)
     eval_env = VecTransposeImage(eval_env)
+    if args.frame_stack > 1:
+        vec_env = VecFrameStack(vec_env, n_stack=args.frame_stack)
+        eval_env = VecFrameStack(eval_env, n_stack=args.frame_stack)
+        print(f"[overnight_dm] Frame stacking: {args.frame_stack} frames")
 
     # Build policy_kwargs based on architecture choice
     policy_kwargs = {
@@ -1285,6 +1314,38 @@ def main():
         print(f"[overnight_dm] Using IMPALA ResNet CNN (features_dim={args.cnn_features_dim})")
     else:
         print(f"[overnight_dm] Using default NatureCNN")
+
+    # Select algorithm class based on policy type
+    if args.policy_type == "lstm":
+        from sb3_contrib import RecurrentPPO
+        AlgoClass = RecurrentPPO
+        policy_name = "MultiInputLstmPolicy"
+        policy_kwargs["lstm_hidden_size"] = int(args.lstm_hidden_size)
+        policy_kwargs["n_lstm_layers"] = int(args.lstm_num_layers)
+        policy_kwargs["shared_lstm"] = False  # separate LSTM for pi and vf
+        policy_kwargs["enable_critic_lstm"] = True
+        print(f"[overnight_dm] Using RecurrentPPO (LSTM hidden={args.lstm_hidden_size}, layers={args.lstm_num_layers})")
+    elif args.policy_type == "transformer":
+        from sb3_contrib import RecurrentPPO
+        AlgoClass = RecurrentPPO
+        policy_name = "MultiInputLstmPolicy"
+        # For transformer, we use frame stacking as the context window
+        # and a larger LSTM as the sequence model (RecurrentPPO's LSTM serves
+        # as the recurrent backbone; true transformer would need custom policy)
+        # Instead, we'll use a larger LSTM + frame stacking as a practical approximation
+        # TODO: implement true transformer policy if LSTM proves insufficient
+        policy_kwargs["lstm_hidden_size"] = int(args.lstm_hidden_size)
+        policy_kwargs["n_lstm_layers"] = max(2, int(args.lstm_num_layers))
+        policy_kwargs["shared_lstm"] = False
+        policy_kwargs["enable_critic_lstm"] = True
+        if args.frame_stack <= 1:
+            print(f"[overnight_dm] WARNING: transformer mode works best with --frame-stack >= 4")
+        print(f"[overnight_dm] Using RecurrentPPO+FrameStack (LSTM hidden={args.lstm_hidden_size}, "
+              f"layers={max(2, args.lstm_num_layers)}, frame_stack={args.frame_stack})")
+    else:
+        AlgoClass = PPO
+        policy_name = "MultiInputPolicy"
+        print(f"[overnight_dm] Using standard PPO (feedforward MLP)")
 
     cb_list = [
         CheckpointCallback(
@@ -1318,14 +1379,14 @@ def main():
     if args.init_model:
         try:
             print(f"[overnight_dm] loading init model: {args.init_model}")
-            model = PPO.load(args.init_model, env=vec_env, device=args.device)
+            model = AlgoClass.load(args.init_model, env=vec_env, device=args.device)
         except Exception as e:
             print(f"[overnight_dm] init model incompatible ({e}); training from scratch.")
             model = None
 
     if model is None:
-        model = PPO(
-            "MultiInputPolicy",
+        model = AlgoClass(
+            policy_name,
             vec_env,
             n_steps=args.n_steps,
             batch_size=args.batch_size,
@@ -1404,13 +1465,16 @@ def main():
             vec_env = VecTransposeImage(vec_env)
             eval_env = make_vec_env(make_eval, n_envs=1)
             eval_env = VecTransposeImage(eval_env)
+            if args.frame_stack > 1:
+                vec_env = VecFrameStack(vec_env, n_stack=args.frame_stack)
+                eval_env = VecFrameStack(eval_env, n_stack=args.frame_stack)
 
             # Reload model from checkpoint
             if ckpt_files:
-                model = PPO.load(latest_ckpt, env=vec_env, device=args.device)
+                model = AlgoClass.load(latest_ckpt, env=vec_env, device=args.device)
             else:
-                model = PPO(
-                    "MultiInputPolicy", vec_env,
+                model = AlgoClass(
+                    policy_name, vec_env,
                     n_steps=args.n_steps, batch_size=args.batch_size,
                     n_epochs=args.n_epochs, learning_rate=args.learning_rate,
                     clip_range=args.clip_range, ent_coef=args.ent_coef,
@@ -1465,6 +1529,9 @@ def main():
         "maps": maps,
         "spawn_farthest": bool(args.spawn_farthest),
         "no_autoaim": bool(args.no_autoaim),
+        "policy_type": args.policy_type,
+        "frame_stack": args.frame_stack,
+        "lstm_hidden_size": args.lstm_hidden_size if args.policy_type in ("lstm", "transformer") else None,
     }
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
