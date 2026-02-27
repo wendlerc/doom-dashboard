@@ -134,6 +134,98 @@ class ImpalaCnnExtractor(BaseFeaturesExtractor):
         gv_feat = self.gv_net(gamevars)
         return torch.cat([cnn_feat, gv_feat], dim=1)
 
+class PretrainedCnnExtractor(BaseFeaturesExtractor):
+    """Pretrained vision encoder (ResNet-18, EfficientNet-B0, etc.) for Dict obs.
+
+    Uses ImageNet-pretrained weights as visual backbone, replacing the IMPALA CNN.
+    The backbone is optionally frozen for the first N steps to stabilize early training.
+    """
+
+    def __init__(self, observation_space: gym.spaces.Dict,
+                 features_dim: int = 256,
+                 backbone: str = "resnet18",
+                 freeze_backbone: bool = False):
+        super().__init__(observation_space, features_dim=1)
+
+        import torchvision.models as tvmodels
+
+        screen_space = observation_space.spaces["screen"]
+        gamevars_space = observation_space.spaces["gamevars"]
+        n_input_channels = screen_space.shape[0]
+
+        # Load pretrained backbone
+        if backbone == "resnet18":
+            weights = tvmodels.ResNet18_Weights.DEFAULT
+            base = tvmodels.resnet18(weights=weights)
+            backbone_feat_dim = base.fc.in_features
+            # Replace first conv if input channels != 3
+            if n_input_channels != 3:
+                base.conv1 = nn.Conv2d(n_input_channels, 64, 7, stride=2, padding=3, bias=False)
+            # Remove final FC — use as feature extractor
+            self.backbone = nn.Sequential(*list(base.children())[:-1], nn.Flatten())
+        elif backbone == "resnet34":
+            weights = tvmodels.ResNet34_Weights.DEFAULT
+            base = tvmodels.resnet34(weights=weights)
+            backbone_feat_dim = base.fc.in_features
+            if n_input_channels != 3:
+                base.conv1 = nn.Conv2d(n_input_channels, 64, 7, stride=2, padding=3, bias=False)
+            self.backbone = nn.Sequential(*list(base.children())[:-1], nn.Flatten())
+        elif backbone == "efficientnet_b0":
+            weights = tvmodels.EfficientNet_B0_Weights.DEFAULT
+            base = tvmodels.efficientnet_b0(weights=weights)
+            backbone_feat_dim = base.classifier[1].in_features
+            if n_input_channels != 3:
+                old_conv = base.features[0][0]
+                base.features[0][0] = nn.Conv2d(n_input_channels, old_conv.out_channels,
+                                                 old_conv.kernel_size, old_conv.stride,
+                                                 old_conv.padding, bias=False)
+            self.backbone = nn.Sequential(base.features, base.avgpool, nn.Flatten())
+        else:
+            raise ValueError(f"Unknown backbone: {backbone}. Use resnet18, resnet34, efficientnet_b0")
+
+        self._freeze_backbone = freeze_backbone
+        if freeze_backbone:
+            for p in self.backbone.parameters():
+                p.requires_grad = False
+
+        # ImageNet normalization (applied in forward)
+        self.register_buffer("_img_mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer("_img_std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+
+        # Project backbone features to desired dim
+        self.proj = nn.Sequential(
+            nn.Linear(backbone_feat_dim, features_dim),
+            nn.ReLU(),
+        )
+
+        # Gamevars MLP (same as IMPALA)
+        gv_dim = int(gamevars_space.shape[0])
+        gv_out = 64
+        self.gv_net = nn.Sequential(
+            nn.Linear(gv_dim, gv_out),
+            nn.ReLU(),
+            nn.Linear(gv_out, gv_out),
+            nn.ReLU(),
+        )
+
+        self._features_dim = features_dim + gv_out
+
+    def forward(self, observations: dict) -> torch.Tensor:
+        screen = observations["screen"].float() / 255.0
+        # ImageNet normalization
+        screen = (screen - self._img_mean) / self._img_std
+        gamevars = observations["gamevars"].float()
+        vis_feat = self.proj(self.backbone(screen))
+        gv_feat = self.gv_net(gamevars)
+        return torch.cat([vis_feat, gv_feat], dim=1)
+
+    def unfreeze_backbone(self):
+        """Call after warmup to enable fine-tuning of the backbone."""
+        for p in self.backbone.parameters():
+            p.requires_grad = True
+        self._freeze_backbone = False
+
+
 # ─── wandb callback ──────────────────────────────────────────────
 
 class WandbMetricCallback(BaseCallback):
@@ -1102,8 +1194,8 @@ def main():
     ap.add_argument("--policy-hidden-size", type=int, default=512)
     ap.add_argument("--policy-hidden-layers", type=int, default=2)
     ap.add_argument("--cnn-type", type=str, default="nature",
-                    choices=["nature", "impala"],
-                    help="CNN feature extractor: nature (SB3 default) or impala (15-layer ResNet)")
+                    choices=["nature", "impala", "resnet18", "resnet34", "efficientnet_b0"],
+                    help="CNN feature extractor: nature, impala, or pretrained (resnet18/resnet34/efficientnet_b0)")
     ap.add_argument("--cnn-features-dim", type=int, default=256,
                     help="CNN feature output dimension (before MLP)")
     ap.add_argument("--policy-type", type=str, default="mlp",
@@ -1318,6 +1410,14 @@ def main():
             "channels": (16, 32, 32),
         }
         print(f"[overnight_dm] Using IMPALA ResNet CNN (features_dim={args.cnn_features_dim})")
+    elif args.cnn_type in ("resnet18", "resnet34", "efficientnet_b0"):
+        policy_kwargs["features_extractor_class"] = PretrainedCnnExtractor
+        policy_kwargs["features_extractor_kwargs"] = {
+            "features_dim": int(args.cnn_features_dim),
+            "backbone": args.cnn_type,
+            "freeze_backbone": False,
+        }
+        print(f"[overnight_dm] Using pretrained {args.cnn_type} (features_dim={args.cnn_features_dim})")
     else:
         print(f"[overnight_dm] Using default NatureCNN")
 

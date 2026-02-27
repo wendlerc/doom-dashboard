@@ -24,6 +24,7 @@ dependencies = [
     "sympy<1.14",  # torch._dynamo requires sympy.S which was removed in 1.14
     "ffmpeg-python>=0.2.0",
     "sb3-contrib>=2.7.1",
+    "torchvision>=0.25.0",
 ]
 
 [tool.hatch.build.targets.wheel]
