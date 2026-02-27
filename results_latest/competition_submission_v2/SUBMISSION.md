@@ -4,11 +4,11 @@
 
 **Recommended for submission.**
 
-### Performance
-- **Best showcase episode**: 62 kills, 4 deaths (K-D = 58)
-- **Average (3 episodes)**: 54 kills, 7.3 deaths
-- **Eval reward**: 148.0 (peak at 950k PPO steps, still training)
-- **Config**: deathmatch_compact.cfg, 1 bot, map01
+### Performance (2M PPO steps, final model)
+- **Best showcase**: 53 kills, 4 deaths (K-D = 49)
+- **Average (3 episodes)**: 49.3 kills, 5.0 deaths (K-D = 44.3)
+- **Eval reward**: 168.7 (peak at 2M steps)
+- **Config**: deathmatch_compact.cfg, 1 bot, map01, 2 min timelimit
 
 ### Architecture
 - **CNN**: IMPALA ResNet (3 blocks: 16, 32, 32 channels, features_dim=256)
@@ -18,18 +18,18 @@
 - **Obs**: 120x160 RGB + 8 gamevars, frame_skip=4
 
 ### Training Pipeline
-1. **Human behavioral cloning**: 10,460 frames, 100 epochs, 47.6% validation accuracy
-2. **PPO fine-tuning**: 950k+ steps with reward shaping (kills, hits, damage, movement)
+1. **Human behavioral cloning**: 10,460 frames, 100 epochs, 47.6% val accuracy
+2. **PPO fine-tuning**: 2M steps with reward shaping (kills, hits, damage, movement)
 
 ## Backup Models
 
-| Model | File | Steps | Eval | Notes |
-|-------|------|-------|------|-------|
-| **BC+PPO** | `bc_finetune_best.zip` | 950k PPO | **148.0** | Human-initialized (primary) |
-| **v11a continued** | `v11a_continued_best.zip` | 4M+350k | 120.9 | Extra training with 2 bots |
-| **v11a original** | `v11a_lstm_best.zip` | 4M | 219* | Pure RL from scratch |
+| Model | File | Eval | Kills/Ep | Deaths/Ep |
+|-------|------|------|----------|-----------|
+| **BC+PPO 2M** | `bc_finetune_best.zip` | **168.7** | 49.3 | 5.0 |
+| v11a continued | `v11a_continued_best.zip` | 120.9 | ~50 | ~12 |
+| v11a original | `v11a_lstm_best.zip` | 219* | ~53 | ~12 |
 
-*v11a eval was with 0 bots (solo); multiplayer scores are lower.
+*v11a original eval was solo (0 bots); multiplayer scores differ.
 
 ## How to Load
 
@@ -54,12 +54,9 @@ while True:
 ```
 
 ## Demo Videos
-- `bc_agent_showcase.mp4` — Best episode: 62 kills, 4 deaths (29s)
+- `bc_agent_showcase.mp4` — Best episode: 53 kills, 4 deaths (29s)
 - `v11a_lstm_showcase.mp4` — v11a pure RL comparison (57s)
 
 ## WandB
 - BC pretraining: https://wandb.ai/chrisxx/doom-overnight/runs/abdstxt8
-- PPO fine-tuning: https://wandb.ai/chrisxx/doom-overnight (run: bc_finetune_lstm_v1)
-
-## Meta
-See `.meta.json` files for button names, action map, obs shape.
+- PPO fine-tuning: https://wandb.ai/chrisxx/doom-overnight/runs/0nydidq1
