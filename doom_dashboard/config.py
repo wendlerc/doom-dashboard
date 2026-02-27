@@ -81,6 +81,7 @@ class PolicyConfig:
     arch: str = "DuelQNet"  # for torch: architecture name
     action_size: Optional[int] = None  # for torch (inferred if None)
     device: str = "auto"    # "auto" | "cpu" | "cuda"
+    deterministic: bool = False  # stochastic by default for diverse behavior
 
     @classmethod
     def from_dict(cls, d: dict) -> "PolicyConfig":
@@ -92,6 +93,7 @@ class PolicyConfig:
             arch=d.get("arch", "DuelQNet"),
             action_size=d.get("action_size"),
             device=d.get("device", "auto"),
+            deterministic=d.get("deterministic", False),
         )
 
 

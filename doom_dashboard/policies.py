@@ -71,11 +71,13 @@ class RandomPolicy(BasePolicy):
 class SB3Policy(BasePolicy):
     """Wraps a Stable-Baselines3 saved model (.zip)."""
 
-    def __init__(self, path: str, algo: str = "PPO", device: str = "auto", name: str = "SB3"):
+    def __init__(self, path: str, algo: str = "PPO", device: str = "auto", name: str = "SB3",
+                 deterministic: bool = False):
         self.name = name
         self.path = path
         self.algo = algo
         self.device = device
+        self.deterministic = deterministic
         self._model = None
         self._button_map: Optional[List[np.ndarray]] = None
         self._train_button_names: Optional[List[str]] = None
@@ -315,7 +317,7 @@ class SB3Policy(BasePolicy):
                 predict_kwargs = dict(
                     state=self._lstm_states,
                     episode_start=self._episode_starts,
-                    deterministic=True,
+                    deterministic=self.deterministic,
                 )
                 if obs_dict is not None:
                     action, self._lstm_states = self._model.predict(obs_dict, **predict_kwargs)
@@ -324,13 +326,13 @@ class SB3Policy(BasePolicy):
                 self._episode_starts = np.zeros((1,), dtype=bool)
             else:
                 if obs_dict is not None:
-                    action, _ = self._model.predict(obs_dict, deterministic=True)
+                    action, _ = self._model.predict(obs_dict, deterministic=self.deterministic)
                 else:
-                    action, _ = self._model.predict(small[np.newaxis], deterministic=True)
+                    action, _ = self._model.predict(small[np.newaxis], deterministic=self.deterministic)
         except Exception:
             # Final fallback: try raw array
             try:
-                action, _ = self._model.predict(obs[np.newaxis], deterministic=True)
+                action, _ = self._model.predict(obs[np.newaxis], deterministic=self.deterministic)
             except Exception:
                 return np.zeros(n, dtype=np.float32)
 
@@ -564,6 +566,7 @@ def load_policy(cfg: Any) -> BasePolicy:
             algo=cfg.algo,
             device=cfg.device,
             name=name,
+            deterministic=getattr(cfg, 'deterministic', False),
         )
 
     elif ptype == "torch":

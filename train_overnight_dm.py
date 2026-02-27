@@ -328,7 +328,7 @@ class WandbVideoCallback(BaseCallback):
                     "screen": np.transpose(obs["screen"], (2, 0, 1))[None],
                     "gamevars": obs["gamevars"][None],
                 }
-                action, _ = self.model.predict(model_obs, deterministic=True)
+                action, _ = self.model.predict(model_obs, deterministic=False)
                 frames.append(obs["screen"].copy())
                 obs, _, term, trunc, _ = env.step(int(action[0]))
                 if term or trunc:
@@ -1485,7 +1485,21 @@ def main():
     if args.init_model:
         try:
             print(f"[overnight_dm] loading init model: {args.init_model}")
-            model = AlgoClass.load(args.init_model, env=vec_env, device=args.device)
+            # Override key hyperparams from CLI (loaded models may have wrong defaults)
+            custom_objects = {
+                "learning_rate": args.learning_rate,
+                "ent_coef": args.ent_coef,
+                "clip_range": args.clip_range,
+                "n_steps": args.n_steps,
+                "batch_size": args.batch_size,
+                "n_epochs": args.n_epochs,
+                "gamma": args.gamma,
+                "gae_lambda": args.gae_lambda,
+                "target_kl": args.target_kl,
+            }
+            model = AlgoClass.load(args.init_model, env=vec_env, device=args.device,
+                                   custom_objects=custom_objects)
+            print(f"[overnight_dm] loaded model with ent_coef={model.ent_coef}, lr={model.learning_rate}")
         except Exception as e:
             print(f"[overnight_dm] init model incompatible ({e}); training from scratch.")
             model = None

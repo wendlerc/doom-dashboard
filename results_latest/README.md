@@ -1,76 +1,61 @@
 # Doom Deathmatch Agent — Latest Results
 
-## Competition Submission (v2)
+## Competition Submission (v3) — CURRENT
 
-**Folder**: `results_latest/competition_submission_v2/`
+**Folder**: `results_latest/competition_submission_v3/`
 **WandB**: https://wandb.ai/chrisxx/doom-overnight
 
-### Best Models
+### Best Model: BC+PPO High-Entropy
 
-| Model | Architecture | Steps | Eval Reward | Kills/2min | Deaths/2min | Notes |
-|-------|-------------|-------|-------------|------------|-------------|-------|
-| **bc_finetune_best** | IMPALA+LSTM-256 | 475k PPO | 133.4 | ~52 | ~12 | BC pretrained on human data |
-| **v11a_lstm_best** | IMPALA+LSTM-256 | 4M PPO | 219 | ~53 | ~12 | Pure RL from scratch |
+| Metric | Value |
+|--------|-------|
+| **Kills/episode** | 51.1 (10-ep avg, 2 bots) |
+| **Deaths/episode** | 16.2 |
+| **K/D ratio** | 3.2 (10-ep avg), up to 15 in best runs |
+| **Best episode** | 65 kills, 3 deaths |
+| **Actions used** | 19/19 (all macro actions) |
+| **Inference mode** | `deterministic=False` (stochastic) |
+
+### Critical Fix from v2
+v2 models had **ent_coef=0.0** (bug: BC model didn't set it, and `.load()` preserved it).
+This caused complete policy collapse — all models repeated a single action.
+
+v3 uses **ent_coef=0.1** + stochastic inference, resulting in diverse, human-like behavior.
+
+### How to Use
+```python
+from stable_baselines3 import PPO
+model = PPO.load("bc_v2_highent_best.zip", device="cuda")
+action, _ = model.predict(obs, deterministic=False)  # MUST be False!
+```
 
 ### Training Pipeline
-1. **Human gameplay recording** (10,460 frames, fullaction config)
-2. **Behavioral cloning** (47.6% val accuracy, 100 epochs) -> `bc_lstm_human_v2.zip`
-3. **PPO fine-tuning** from BC model -> `bc_finetune_best.zip`
-4. **Pure RL** (v11a_lstm: 4M steps from scratch) -> `v11a_lstm_best.zip`
-
-### Key Features
-- **IMPALA ResNet CNN** (3 blocks: 16, 32, 32 channels)
-- **RecurrentPPO** with LSTM-256 for temporal context
-- **19 macro-discrete actions** (compact: 8 buttons -> 19 combos)
-- **Pretrained encoder support**: ResNet-18/34, EfficientNet-B0 (ImageNet weights)
-- **Human behavioral cloning** pipeline with cross-config action mapping
+1. **Human behavioral cloning**: 10,460 frames, 100 epochs, 47.6% val accuracy
+2. **PPO fine-tuning**: 775k best checkpoint (3M run), ent_coef=0.1, no attack_bonus, noop_penalty=0.1
 
 ---
 
-## Architecture Evolution
-
-### v10 (baseline): Feedforward MLP + IMPALA CNN
-- PPO with 19 macro-discrete actions
-- No temporal context, single frame input
-
-### v11: Temporal Context
-- **v11a**: RecurrentPPO LSTM-256 (4M steps, eval=219)
-- **v11b**: PPO + VecFrameStack(4) (4M steps, poor multiplayer)
-
-### v12: Human-initialized (BC + PPO)
-- Behavioral cloning from 10k human gameplay frames
-- PPO fine-tuning with same architecture as v11a
-- Reaches v11a-level performance in ~475k steps (8x fewer)
-
----
-
-## Reward Shaping
-| Component | Value | Type |
-|-----------|-------|------|
-| frag_bonus | 200 | Per player kill |
-| hit_bonus | 12.0 | Per hit landed |
-| damage_bonus | 0.2 | Per damage dealt |
-| death_penalty | 30 | Per death |
-| attack_bonus | 0.05 | Per attack action |
-| move_bonus | 0.2 | Position displacement |
-| noop_penalty | 0.1 | Per idle frame |
-| reward_scale | 0.1 | Global multiplier |
+## Architecture
+- **CNN**: IMPALA ResNet (3 blocks: 16, 32, 32 channels, features_dim=256)
+- **Policy**: PPO MLP (2x512 hidden layers)
+- **Actions**: 19 macro-discrete (8 buttons: ATTACK, SPEED, MOVE_R/L/F/B, TURN_R/L)
+- **Obs**: 120x160 RGB + 8 gamevars, frame_skip=4
 
 ## Key Scripts
-- `train_overnight_dm.py` — main training (supports LSTM/MLP/FrameStack, IMPALA/ResNet/EfficientNet)
-- `pretrain_bc.py` — behavioral cloning from human demos (with wandb logging)
-- `bench_model.py` — standalone model benchmark
-- `record_gameplay.sh` — human gameplay recorder
+- `train_overnight_dm.py` — main PPO training
+- `pretrain_bc.py` — behavioral cloning from human demos
+- `test_stochastic_video.py` — generate test videos
+- `diagnose_policy.py` — diagnose action diversity / policy collapse
 
 ## Files
 ```
 results_latest/
-  competition_submission_v2/
-    bc_finetune_best.zip              # BC+PPO best model (primary submission)
-    v11a_lstm_best.zip                # Pure RL model (backup)
-    *.meta.json                       # Model metadata
-    bc_agent_showcase.mp4             # BC model video demo
-    v11a_lstm_showcase.mp4            # v11a model video demo
-    SUBMISSION.md                     # Loading instructions
-  README.md                          # This file
+  competition_submission_v3/       # <-- USE THIS
+    bc_v2_highent_best.zip         # Best model (PPO, stochastic inference)
+    bc_v2_highent_best.meta.json   # Model metadata
+    bc_v2_highent_775k.zip         # Backup copy of best model
+    bc_v2_showcase_5ep.mp4         # 5-episode demo vs 2 bots: 262 kills, 45 deaths
+    bc_v2_showcase.mp4             # 3-episode demo vs 1 bot: 169 kills, 28 deaths
+    SUBMISSION.md                  # Full details and loading instructions
+  competition_submission_v2/       # OLD (broken — spinning models)
 ```

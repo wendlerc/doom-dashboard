@@ -889,6 +889,7 @@ def inject_bc_weights_lstm(
         "MultiInputLstmPolicy",
         dummy_env,
         policy_kwargs=policy_kwargs,
+        ent_coef=0.01,  # Set reasonable default so loaded models don't have ent_coef=0
         device=device,
         verbose=0,
     )

@@ -8,12 +8,9 @@ dist/
 .eggs/
 
 # Large data files — never commit these
-trained_policies/**/*.zip
-trained_policies/**/*.pt
-trained_policies/**/*.pth
-trained_policies/*.zip
-trained_policies/*.pt
-trained_policies/*.pth
+*.zip
+*.pt
+*.pth
 dataset/
 mp_dataset/
 samples/
@@ -24,6 +21,23 @@ human_demos/
 *.pkl
 *.lmp
 *.mp4
+*.avi
+*.png
+external_models/
+wandb/
+
+# Generated video indexes and validation dirs
+**/index.json
+v10_validation_videos/
+best5_videos/
+elim_videos*/
+overnight_videos*/
+phase1_demo/
+samples_deathmatch_showcase/
+
+# Runtime config files
+_vizdoom/
+_vizdoom.ini
 
 # Logs
 *.log
