@@ -1,27 +1,35 @@
 # Doom Deathmatch Competition Submission (v2)
 
-## Models
+## Primary Model: BC+PPO Fine-tuned LSTM (`bc_finetune_best.zip`)
 
-### Primary: BC+PPO Fine-tuned LSTM (`bc_finetune_best.zip`)
-- **Architecture**: IMPALA CNN + RecurrentPPO (LSTM-256, 1 layer)
-- **Training**: Human behavioral cloning (47.6% val acc, 100 epochs) + PPO fine-tuning (475k+ steps)
-- **Human data**: 10,460 frames of human gameplay, mapped to 19 macro-discrete actions
-- **Performance**: ~52 kills, ~12 deaths per 2-min episode (2 bots, map01)
-- **Eval reward**: 133.4 (peak at 475k steps, still training)
+**Recommended for submission.**
 
-### Backup: v11a LSTM (`v11a_lstm_best.zip`)
-- **Architecture**: Same (IMPALA CNN + RecurrentPPO LSTM-256)
-- **Training**: 4M PPO steps from scratch (no human data)
-- **Performance**: ~53 kills, ~12 deaths per 2-min episode (2 bots, map01)
-- **Eval reward**: 219 (peak at ~1.2M steps)
+### Performance
+- **Best showcase episode**: 62 kills, 4 deaths (K-D = 58)
+- **Average (3 episodes)**: 54 kills, 7.3 deaths
+- **Eval reward**: 148.0 (peak at 950k PPO steps, still training)
+- **Config**: deathmatch_compact.cfg, 1 bot, map01
 
-## Architecture Details
+### Architecture
 - **CNN**: IMPALA ResNet (3 blocks: 16, 32, 32 channels, features_dim=256)
 - **Policy**: RecurrentPPO (LSTM hidden=256, 1 layer, shared=False, enable_critic_lstm=True)
 - **MLP**: 2x512 hidden layers
-- **Actions**: 19 macro-discrete (8 buttons: move, turn, attack, speed)
+- **Actions**: 19 macro-discrete (8 buttons: ATTACK, SPEED, MOVE_R/L/F/B, TURN_R/L)
 - **Obs**: 120x160 RGB + 8 gamevars, frame_skip=4
-- **Config**: deathmatch_compact.cfg, map01
+
+### Training Pipeline
+1. **Human behavioral cloning**: 10,460 frames, 100 epochs, 47.6% validation accuracy
+2. **PPO fine-tuning**: 950k+ steps with reward shaping (kills, hits, damage, movement)
+
+## Backup Models
+
+| Model | File | Steps | Eval | Notes |
+|-------|------|-------|------|-------|
+| **BC+PPO** | `bc_finetune_best.zip` | 950k PPO | **148.0** | Human-initialized (primary) |
+| **v11a continued** | `v11a_continued_best.zip` | 4M+350k | 120.9 | Extra training with 2 bots |
+| **v11a original** | `v11a_lstm_best.zip` | 4M | 219* | Pure RL from scratch |
+
+*v11a eval was with 0 bots (solo); multiplayer scores are lower.
 
 ## How to Load
 
@@ -29,10 +37,8 @@
 from sb3_contrib import RecurrentPPO
 import numpy as np
 
-# Load model
 model = RecurrentPPO.load("bc_finetune_best.zip", device="cuda")
 
-# Inference with LSTM state
 obs = env.reset()
 lstm_states = None
 episode_starts = np.ones((1,), dtype=bool)
@@ -48,14 +54,8 @@ while True:
 ```
 
 ## Demo Videos
-- `bc_agent_showcase.mp4` — BC+PPO agent playing deathmatch (57s, 43 kills)
-- `v11a_lstm_showcase.mp4` — v11a pure RL agent comparison (57s, 71 kills)
-
-## Training Pipeline
-1. **Human demo recording** via `record_gameplay.sh`
-2. **Behavioral cloning** via `pretrain_bc.py` (LSTM, 100 epochs, 47.6% accuracy)
-3. **PPO fine-tuning** via `train_overnight_dm.py --init-model bc_model.zip`
-4. **Evaluation** via `bench_model.py`
+- `bc_agent_showcase.mp4` — Best episode: 62 kills, 4 deaths (29s)
+- `v11a_lstm_showcase.mp4` — v11a pure RL comparison (57s)
 
 ## WandB
 - BC pretraining: https://wandb.ai/chrisxx/doom-overnight/runs/abdstxt8
