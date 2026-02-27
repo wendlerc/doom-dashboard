@@ -365,6 +365,7 @@ def train_bc_mlp(
     lr: float,
     device: str,
     val_split: float = 0.1,
+    wandb_run=None,
 ) -> dict:
     """Train MLP BC policy and return state_dict + metadata for SB3 injection."""
 
@@ -482,6 +483,17 @@ def train_bc_mlp(
                 "pi_head": {k: v.cpu().clone() for k, v in pi_head.state_dict().items()},
             }
 
+        if wandb_run is not None:
+            wandb_run.log({
+                "bc/epoch": epoch,
+                "bc/train_loss": avg_train_loss,
+                "bc/train_acc": train_acc,
+                "bc/val_loss": avg_val_loss,
+                "bc/val_acc": val_acc,
+                "bc/best_val_acc": best_val_acc,
+                "bc/lr": scheduler.get_last_lr()[0],
+            })
+
         if epoch % max(1, epochs // 20) == 0 or epoch == 1 or epoch == epochs:
             print(
                 f"  epoch {epoch:4d}/{epochs}  "
@@ -522,6 +534,7 @@ def train_bc_lstm(
     lr: float,
     device: str,
     val_split: float = 0.1,
+    wandb_run=None,
 ) -> dict:
     """Train LSTM BC policy and return state_dict + metadata."""
 
@@ -653,6 +666,17 @@ def train_bc_lstm(
                 "lstm": {k: v.cpu().clone() for k, v in lstm.state_dict().items()},
                 "pi_head": {k: v.cpu().clone() for k, v in pi_head.state_dict().items()},
             }
+
+        if wandb_run is not None:
+            wandb_run.log({
+                "bc/epoch": epoch,
+                "bc/train_loss": avg_train_loss,
+                "bc/train_acc": train_acc,
+                "bc/val_loss": avg_val_loss,
+                "bc/val_acc": val_acc,
+                "bc/best_val_acc": best_val_acc,
+                "bc/lr": scheduler.get_last_lr()[0],
+            })
 
         if epoch % max(1, epochs // 20) == 0 or epoch == 1 or epoch == epochs:
             print(
@@ -991,6 +1015,12 @@ def main():
                     help="Device: cuda, cpu, or auto")
     ap.add_argument("--val-split", type=float, default=0.1,
                     help="Fraction of data for validation")
+    ap.add_argument("--wandb", action="store_true",
+                    help="Log metrics to Weights & Biases")
+    ap.add_argument("--wandb-project", type=str, default="doom-overnight",
+                    help="WandB project name")
+    ap.add_argument("--wandb-name", type=str, default=None,
+                    help="WandB run name (default: auto-generated)")
     args = ap.parse_args()
 
     # Resolve device
@@ -999,6 +1029,33 @@ def main():
     else:
         device = args.device
     print(f"[pretrain_bc] device={device}")
+
+    # WandB init
+    wandb_run = None
+    if args.wandb:
+        import wandb
+        run_name = args.wandb_name or f"bc_{args.policy_type}_{Path(args.cfg).stem}"
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=run_name,
+            config={
+                "task": "behavioral_cloning",
+                "policy_type": args.policy_type,
+                "cnn_type": args.cnn_type,
+                "cnn_features_dim": args.cnn_features_dim,
+                "hidden_size": args.policy_hidden_size,
+                "hidden_layers": args.policy_hidden_layers,
+                "lstm_hidden_size": args.lstm_hidden_size if args.policy_type == "lstm" else None,
+                "lstm_num_layers": args.lstm_num_layers if args.policy_type == "lstm" else None,
+                "epochs": args.epochs,
+                "batch_size": args.batch_size,
+                "lr": args.lr,
+                "skip_noop": args.skip_noop,
+                "cfg": args.cfg,
+                "demo_dir": args.demo_dir,
+            },
+        )
+        print(f"[pretrain_bc] wandb run: {wandb_run.url}")
 
     # Resolve cfg and parse buttons
     cfg_path = materialize_cfg(args.cfg)
@@ -1017,7 +1074,7 @@ def main():
         print(f"ERROR: demo directory not found: {demo_dir}")
         sys.exit(1)
 
-    npz_files = sorted(demo_dir.glob("*.npz"))
+    npz_files = sorted(f for f in demo_dir.glob("*.npz") if not f.name.endswith(".actions.npz"))
     if not npz_files:
         print(f"ERROR: no .npz files found in {demo_dir}")
         sys.exit(1)
@@ -1082,6 +1139,7 @@ def main():
             lr=args.lr,
             device=device,
             val_split=args.val_split,
+            wandb_run=wandb_run,
         )
     else:
         bc_result = train_bc_mlp(
@@ -1098,6 +1156,7 @@ def main():
             lr=args.lr,
             device=device,
             val_split=args.val_split,
+            wandb_run=wandb_run,
         )
 
     t1 = time.time()
@@ -1178,6 +1237,24 @@ def main():
     raw_ckpt_path = output_path.with_suffix(".bc_ckpt.pt")
     torch.save(bc_result, str(raw_ckpt_path))
     print(f"[pretrain_bc] saved raw BC checkpoint: {raw_ckpt_path}")
+
+    # Log summary to wandb
+    if wandb_run is not None:
+        import wandb
+        wandb_run.summary["bc/best_val_acc"] = bc_result["best_val_acc"]
+        wandb_run.summary["bc/n_samples"] = len(dataset)
+        wandb_run.summary["bc/training_time_s"] = t1 - t0
+        # Log action distribution as a bar chart
+        act_arr = np.array(dataset.actions)
+        counts = np.bincount(act_arr, minlength=len(macro_actions))
+        action_table = wandb.Table(
+            columns=["macro_idx", "name", "count", "pct"],
+            data=[[i, macro_names[i], int(counts[i]), float(100 * counts[i] / len(act_arr))]
+                  for i in range(len(macro_actions)) if counts[i] > 0],
+        )
+        wandb_run.log({"bc/action_distribution": action_table})
+        wandb_run.finish()
+        print(f"[pretrain_bc] wandb run finished")
 
     print(f"\n[pretrain_bc] done! To fine-tune with PPO:")
     print(f"  uv run python train_overnight_dm.py \\")
