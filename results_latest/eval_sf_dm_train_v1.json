@@ -1,0 +1,121 @@
+{
+  "experiment": "sf_dm_train_v1",
+  "checkpoint": "./sf_train_dir/sf_dm_train_v1/checkpoint_p0/best_000018727_153411584_reward_25.188.pth",
+  "episodes": 10,
+  "stats": [
+    {
+      "episode": 0,
+      "reward": 35.941900147907056,
+      "steps": 2100,
+      "fragcount": 26.0,
+      "deathcount": 8.0,
+      "hitcount": 247.0,
+      "damagecount": 3101.0,
+      "health": 75.0,
+      "armor": 0.0
+    },
+    {
+      "episode": 1,
+      "reward": 31.97200014372732,
+      "steps": 2100,
+      "fragcount": 28.0,
+      "deathcount": 24.0,
+      "hitcount": 483.0,
+      "damagecount": 6166.0,
+      "health": 45.0,
+      "armor": 0.0
+    },
+    {
+      "episode": 2,
+      "reward": 20.198400148857043,
+      "steps": 2100,
+      "fragcount": 16.0,
+      "deathcount": 35.0,
+      "hitcount": 656.0,
+      "damagecount": 8207.0,
+      "health": 45.0,
+      "armor": 0.0
+    },
+    {
+      "episode": 3,
+      "reward": 30.090700142207393,
+      "steps": 2100,
+      "fragcount": 27.0,
+      "deathcount": 52.0,
+      "hitcount": 896.0,
+      "damagecount": 11108.0,
+      "health": 100.0,
+      "armor": 0.0
+    },
+    {
+      "episode": 4,
+      "reward": 24.54300013223294,
+      "steps": 2100,
+      "fragcount": 16.0,
+      "deathcount": 57.0,
+      "hitcount": 1042.0,
+      "damagecount": 12787.0,
+      "health": 45.0,
+      "armor": 0.0
+    },
+    {
+      "episode": 5,
+      "reward": 21.401300138977575,
+      "steps": 2100,
+      "fragcount": 22.0,
+      "deathcount": 80.0,
+      "hitcount": 1299.0,
+      "damagecount": 16017.0,
+      "health": 100.0,
+      "armor": 0.0
+    },
+    {
+      "episode": 6,
+      "reward": 19.295000135367797,
+      "steps": 2100,
+      "fragcount": 17.0,
+      "deathcount": 95.0,
+      "hitcount": 1480.0,
+      "damagecount": 18406.0,
+      "health": 20.0,
+      "armor": 0.0
+    },
+    {
+      "episode": 7,
+      "reward": 34.98210014752707,
+      "steps": 2100,
+      "fragcount": 26.0,
+      "deathcount": 104.0,
+      "hitcount": 1707.0,
+      "damagecount": 21469.0,
+      "health": 19.0,
+      "armor": 0.0
+    },
+    {
+      "episode": 8,
+      "reward": 32.827900141162466,
+      "steps": 2100,
+      "fragcount": 26.0,
+      "deathcount": 119.0,
+      "hitcount": 1937.0,
+      "damagecount": 24803.0,
+      "health": 100.0,
+      "armor": 0.0
+    },
+    {
+      "episode": 9,
+      "reward": 34.16850014296735,
+      "steps": 2100,
+      "fragcount": 29.0,
+      "deathcount": 137.0,
+      "hitcount": 2165.0,
+      "damagecount": 28436.0,
+      "health": 70.0,
+      "armor": 0.0
+    }
+  ],
+  "summary": {
+    "avg_reward": 28.542080142093404,
+    "std_reward": 6.184880665464157
+  }
+}
