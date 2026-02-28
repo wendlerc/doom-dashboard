@@ -3,76 +3,74 @@
 ## Sample Factory Models — CURRENT BEST
 
 **WandB**: https://wandb.ai/chrisxx/doom-deathmatch
-**Framework**: [Sample Factory](https://github.com/alex-petrenko/sample-factory) (APPO)
+**Framework**: [Sample Factory](https://github.com/wendlerc/sample-factory/tree/doom-arena) (APPO)
+**Fork**: https://github.com/wendlerc/sample-factory (branch: `doom-arena`)
 
-### Pretrained Models (HuggingFace) — Best Available
+### Trained From Scratch (sf_dm_train_v1) — BEST MODEL
 
-Three pretrained deathmatch agents trained with APPO + LSTM (~2B frames each).
-These agents **win 1st place** against 7 bots in most matches.
+Trained from scratch to 500M frames (~2.5h on A6000). **3x better than pretrained models!**
 
-| Model | Source | Avg Reward | Frags/ep | Wins (out of 10) |
-|-------|--------|-----------|----------|-------------------|
-| **SF Seed 0** | andrewzhang505/doom_deathmatch_bots | **28.0** | **25.2** | **9/10 (1st place)** |
-| SF Seed 2222 | edbeeching/doom_deathmatch_bots_2222 | 24.0 | ~24 | - |
-| SF Seed 3333 | edbeeching/doom_deathmatch_bots_3333 | 25.1 | ~25 | - |
+| Metric | Value |
+|--------|-------|
+| **Avg Reward** | **75.3 +/- 6.0** |
+| **Avg Frags/ep** | **63.3** |
+| Deaths/ep | ~20 |
+| Damage/ep | ~6500 |
+| K/D Ratio | ~3.2 |
+| Frames Trained | 500M |
 
-*10-episode averages, 8-player FFA (1 agent + 7 bots).*
-
-### Trained From Scratch (sf_dm_train_v1) — In Progress
-
-Training from scratch at ~28k FPS on A6000. Currently resuming to 500M frames.
-
-| Checkpoint | Frames | Avg Reward | Frags/ep |
-|-----------|--------|-----------|----------|
-| 100M (completed) | 100M | 7.8 | 7.2 |
-| 500M (training...) | 500M | TBD | TBD |
-
-Reward progression (100M run):
+Reward progression:
 ```
- 10M: -5.7 → 20M: 0.0 → 30M: 0.9 → 47M: 2.7 → 72M: 4.8 → 100M: 9.15
+ 10M: -5.7 → 20M: 0.0 → 30M: 0.9 → 47M: 2.7 → 72M: 4.8 → 100M: 9.15 → 155M: 29.8 → 500M: 75.3
 ```
+
+### Pretrained Models (HuggingFace)
+
+| Model | Source | Avg Reward | Frags/ep |
+|-------|--------|-----------|----------|
+| SF Seed 0 | andrewzhang505/doom_deathmatch_bots | 28.0 | 25.2 |
+| SF Seed 2222 | edbeeching/doom_deathmatch_bots_2222 | 24.0 | ~24 |
+| SF Seed 3333 | edbeeching/doom_deathmatch_bots_3333 | 25.1 | ~25 |
 
 ### Architecture
 - **Algorithm**: APPO (Async PPO) with GAE (lambda=0.95)
-- **Encoder**: ConvNet Simple → 512 MLP → LSTM 512
+- **Encoder**: ConvNet Simple -> 512 MLP -> LSTM 512
 - **Input**: 128x72 RGB, CHW format, frameskip=4
 - **Actions**: 39 discrete (full Doom action space)
 - **Training**: 16 workers x 8 envs, batch_size=2048
+- **Map**: dwango5.wad (deathmatch, 7 bots)
 
-### How to Run
+### How to Run (using the fork)
 
 ```bash
-# Run pretrained model
-uv run python run_sf_agent.py --experiment 00_bots_128_fs2_narrow_see_0 --episodes 5 --output gameplay.mp4
+# Install the fork
+pip install -e "/path/to/sample-factory[vizdoom]"
+
+# Download pretrained models
+python -m sf_examples.vizdoom.doom_arena.download_models
+
+# Run best trained agent
+python -m sf_examples.vizdoom.doom_arena.run_agent \
+    --experiment sf_dm_train_v1 --episodes 5 --output gameplay.mp4
 
 # Train from scratch with wandb
-uv run python train_sf_deathmatch.py --experiment=sf_dm_v2 --with_wandb=True
-
-# Resume training
-uv run python train_sf_deathmatch.py --experiment=sf_dm_train_v1 --restart_behavior=resume --with_wandb=True
+python -m sf_examples.vizdoom.doom_arena.train_deathmatch \
+    --experiment=my_run --with_wandb=True --train_for_env_steps=500000000
 
 # Evaluate a model
-uv run python eval_sf_detailed.py --experiment sf_dm_train_v1 --episodes 10
+python -m sf_examples.vizdoom.doom_arena.eval_detailed --experiment sf_dm_train_v1 --episodes 10
 
 # Sample frames for visual inspection
-uv run python sample_sf_frames.py
-
-# Monitor training progress (logs videos to wandb)
-uv run python monitor_sf_training.py --experiment sf_dm_train_v1 --interval 600
+python -m sf_examples.vizdoom.doom_arena.sample_frames
 ```
 
 ### Showcase Videos
 ```
-sf_best_showcase.mp4        # Best pretrained (Seed 0), 10 episodes, avg reward 25.6
-sf_pretrained.mp4           # Seed 0, 5 episodes
-sf_model_2222.mp4           # Seed 2222, 3 episodes
-sf_model_3333.mp4           # Seed 3333, 5 episodes
-sf_trained_100M.mp4         # Trained from scratch, 100M frames, avg reward 7.7
-sf_training_progress_47M.mp4 # Training checkpoint at 47M
+sf_trained_500M.mp4             # Best model (500M), 5 episodes, avg reward 75.3
+sf_trained_155M_showcase.mp4    # 155M checkpoint, avg reward 29.8
+sf_trained_100M.mp4             # 100M checkpoint, avg reward 7.7
+sf_best_showcase.mp4            # Best pretrained (Seed 0), avg reward 25.6
 ```
-
-### Frame Samples
-See `results_latest/sf_frame_samples/` for sampled gameplay frames from all 3 pretrained models.
 
 ---
 
@@ -80,12 +78,3 @@ See `results_latest/sf_frame_samples/` for sampled gameplay frames from all 3 pr
 
 BC Only LSTM (K/D=18.7 vs 1 bot) and PPO models. User found these visually lacking.
 See git history for details.
-
-### Key Scripts
-- `run_sf_agent.py` — Run SF pretrained models, generate videos
-- `train_sf_deathmatch.py` — Train SF deathmatch from scratch with wandb
-- `eval_sf_detailed.py` — Detailed evaluation (frags, deaths, damage)
-- `sample_sf_frames.py` — Sample frames for visual inspection
-- `monitor_sf_training.py` — Monitor training, log videos to wandb
-- `log_sf_results_wandb.py` — Log evaluation results to wandb
-- `make_showcase.py` — Side-by-side comparison videos
